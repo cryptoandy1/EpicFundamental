@@ -53,7 +53,7 @@ python -m app export              статический экспорт API в J
 | 9 | Топ-валидаторы бирж | моники валидаторов (Binance/OKX/...) → события на графике | — |
 | 10 | Упоминания СМИ | GDELT (история с 2017) без PR-wire доменов + CryptoPanic | `CRYPTOPANIC_TOKEN` опционально |
 | 11 | Smart money | эвристика свежих кошельков (Etherscan) | `ETHERSCAN_API_KEY` + `token_contracts` |
-| 12 | Discord по существу | экспорт DiscordChatExporter + классификация Claude API | `ANTHROPIC_API_KEY` (иначе эвристика) |
+| 12 | Discord по существу | автоэкспорт scripts/discord_export.py + классификация Claude API | `DISCORD_TOKEN` + `ANTHROPIC_API_KEY` (иначе эвристика) |
 | 13 | Активность CEO | ручной ввод в config/manual_metrics.yaml | руками (X API платный) |
 | 14 | Google Trends по проекту | pytrends, вся история | — |
 | + | Экономика сети: TVL, стейблкоины, DEX-объёмы, комиссии | DefiLlama, бесплатные эндпоинты, вся история | — |
@@ -69,6 +69,28 @@ ANTHROPIC_API_KEY    классификация Discord-сообщений (мо
 CRYPTOPANIC_TOKEN    cryptopanic.com/developers/api (бесплатный тариф)
 DEFILLAMA_API_KEY    DefiLlama Pro — авто-фандинг и авто-разлоки вместо ручного ввода
 ```
+
+## Discord-экспорт (ф.12)
+
+1. Вступите своим аккаунтом в Discord-серверы монет пула (инвайты — `discord_invite`
+   в projects.yaml).
+2. Положите `DISCORD_TOKEN` в backend/.env (как достать — комментарий в .env.example;
+   учтите: экспорт юзер-токеном формально против ToS Discord).
+3. Распакуйте [DiscordChatExporter.Cli.win-x64](https://github.com/Tyrrrz/DiscordChatExporter/releases)
+   в `tools/DiscordChatExporter/` (не в git).
+4. `cd backend && .venv\Scripts\python scripts\discord_export.py` — экспорт последних
+   120 дней основных каналов, затем `python -m app backfill --collector discord`.
+
+## Roadmap
+
+- **Автообновление**: задача в планировщике Windows (ежедневно `update` + deploy.ps1) —
+  решили включить позже, когда надоест запускать руками.
+- Нативные переводы в коллекторе кошельков (сейчас только ERC-20 `tokentx` — фонд,
+  двигающий нативный AVAX, не виден) и не-EVM адаптеры (Solscan/NearBlocks/Mintscan)
+  для SOL/NEAR/TIA/SUI/APT/TAO.
+- Бэктест лесенки: as-of скоринг по накопленной истории + симуляция ротации vs HODL BTC.
+- Алерты выхода (Trends BTC ≥90 / Coinbase в топ-10) в Telegram.
+- Ручной ввод unlock_events / funding_rounds по всем монетам пула (или DefiLlama Pro).
 
 ## Публикация на GitHub Pages
 

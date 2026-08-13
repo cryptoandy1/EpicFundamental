@@ -43,6 +43,8 @@ projects:
     trends_keyword: solana
     twitter_project: solana
     twitter_ceo: aeyakovenko
+    discord_invite: solana
+    discord_export_dir: data/discord/solana
     wallets: []
 
   - id: celestia
@@ -57,6 +59,8 @@ projects:
     trends_keyword: celestia crypto
     twitter_project: CelestiaOrg
     twitter_ceo: musalbas
+    discord_invite: YsnTPcSfWQ
+    discord_export_dir: data/discord/celestia
     wallets: []
 
   - id: near
@@ -70,6 +74,8 @@ projects:
     trends_keyword: near protocol
     twitter_project: NEARProtocol
     twitter_ceo: ilblackdragon
+    discord_invite: nearprotocol
+    discord_export_dir: data/discord/near
     wallets: []
 
   - id: avalanche
@@ -83,6 +89,87 @@ projects:
     trends_keyword: avalanche crypto
     twitter_project: avax
     twitter_ceo: el33th4xor
+    discord_invite: avax
+    discord_export_dir: data/discord/avalanche
+    wallets: []
+
+  - id: sui
+    name: Sui
+    symbol: SUI
+    coingecko_id: sui
+    binance_symbol: SUIUSDT
+    chain: sui
+    github:
+      - MystenLabs/sui
+    trends_keyword: sui crypto
+    twitter_project: SuiNetwork
+    twitter_ceo: EvanWeb3
+    discord_invite: sui
+    discord_export_dir: data/discord/sui
+    wallets: []
+
+  - id: aptos
+    name: Aptos
+    symbol: APT
+    coingecko_id: aptos
+    binance_symbol: APTUSDT
+    chain: aptos
+    github:
+      - aptos-labs/aptos-core
+    trends_keyword: aptos
+    twitter_project: Aptos
+    twitter_ceo: averyching
+    discord_invite: aptosnetwork
+    discord_export_dir: data/discord/aptos
+    wallets: []
+
+  - id: sei
+    name: Sei
+    symbol: SEI
+    coingecko_id: sei-network
+    binance_symbol: SEIUSDT
+    chain: sei
+    github:
+      - sei-protocol/sei-chain
+    trends_keyword: sei crypto
+    twitter_project: SeiNetwork
+    twitter_ceo: jayendra_jog
+    discord_invite: sei
+    discord_export_dir: data/discord/sei
+    wallets: []
+
+  - id: injective
+    name: Injective
+    symbol: INJ
+    coingecko_id: injective-protocol
+    binance_symbol: INJUSDT
+    chain: injective
+    github:
+      # нода injective-core закрыта — активные публичные SDK как прокси разработки
+      - InjectiveLabs/injective-ts
+      - InjectiveLabs/sdk-go
+    trends_keyword: injective
+    twitter_project: injective
+    twitter_ceo: ericinjective
+    discord_invite: injective
+    discord_export_dir: data/discord/injective
+    wallets: []
+    # канонический ERC-20 контракт INJ (сверен с CoinGecko) — для smart money (ф.11)
+    token_contracts: { ethereum: "0xe28b3b32b6c345a34ff64674606124dd5aceca30" }
+
+  - id: bittensor
+    name: Bittensor
+    symbol: TAO
+    coingecko_id: bittensor
+    binance_symbol: TAOUSDT
+    chain: bittensor
+    github:
+      - RaoFoundation/subtensor
+    trends_keyword: bittensor
+    twitter_project: opentensor
+    twitter_ceo: const_reborn
+    discord_invite: bittensor
+    discord_export_dir: data/discord/bittensor
     wallets: []
 
 # Курируемый список авторитетных Twitter-аккаунтов (ф.6):
@@ -96,6 +183,11 @@ twitter_curation:
   celestia: []
   near: []
   avalanche: []
+  sui: []
+  aptos: []
+  sei: []
+  injective: []
+  bittensor: []
 
 # Скринер (ф.3): фильтры отбора кандидатов из CoinGecko
 screener:

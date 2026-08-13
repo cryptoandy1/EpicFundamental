@@ -10,6 +10,9 @@ backend/.env
 backend/data/
 backend/backfill*.txt
 
+# Скачанные бинарники (DiscordChatExporter и т.п.)
+tools/
+
 # Node / Next.js
 frontend/node_modules/
 frontend/.next/
