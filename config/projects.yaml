@@ -1,0 +1,120 @@
+# Утверждённый пул монет. Кандидатов подбирает скринер (python -m app screen),
+# сюда вы вручную переносите то, что утвердили.
+#
+# Поля проекта:
+#   name, symbol         — отображение
+#   coingecko_id         — id на CoinGecko (для капы/объёма/genesis)
+#   binance_symbol       — пара на Binance для полной истории цены (напр. SOLUSDT)
+#   chain                — своя сеть (для коллектора нод) или сеть токена
+#   github               — список репозиториев "org/repo" (основные, 1-3 шт.)
+#   trends_keyword       — запрос для Google Trends (обычно название)
+#   twitter_project      — @хэндл проекта (ручная курация, ф.6)
+#   twitter_ceo          — @хэндл CEO (ф.13, слот под X API / ручной ввод)
+#   discord_export_dir   — папка с JSON-экспортами DiscordChatExporter (ф.12)
+#   wallets              — помеченные кошельки команды/фонда/инвесторов (ф.7, 11).
+#                          Адреса берите из меток Arkham/Etherscan/Nansen-public —
+#                          НЕ заполняйте наугад.
+#     - chain: ethereum
+#       address: "0x..."
+#       label: team | foundation | investor
+#       name: "Team vesting 1"
+#   token_contracts      — контракт токена для он-чейн эвристик (ф.11), напр.
+#     token_contracts: { ethereum: "0x..." }
+#
+#   DefiLlama перенёс raises/emissions в платный Pro (нужен DEFILLAMA_API_KEY).
+#   Бесплатная альтернатива — ручной ввод (данные публичны, 5 минут на монету):
+#   funding_rounds       — раунды с cryptorank.io / messari.io (ф.4):
+#     - { date: 2021-06-09, round: "Series A", amount_usd: 314000000,
+#         investors: [a16z, Polychain] }
+#   unlock_events        — клифы с token.unlocks.app / cryptorank.io/unlocks (ф.7),
+#                          будущие тоже (лягут оверлеем на график цены):
+#     - { date: 2026-10-30, tokens: 175000000, note: "team + investors cliff" }
+
+projects:
+  - id: solana
+    name: Solana
+    symbol: SOL
+    coingecko_id: solana
+    binance_symbol: SOLUSDT
+    chain: solana
+    github:
+      - solana-labs/solana
+      - anza-xyz/agave
+    trends_keyword: solana
+    twitter_project: solana
+    twitter_ceo: aeyakovenko
+    wallets: []
+
+  - id: celestia
+    name: Celestia
+    symbol: TIA
+    coingecko_id: celestia
+    binance_symbol: TIAUSDT
+    chain: celestia
+    github:
+      - celestiaorg/celestia-node
+      - celestiaorg/celestia-app
+    trends_keyword: celestia crypto
+    twitter_project: CelestiaOrg
+    twitter_ceo: musalbas
+    wallets: []
+
+  - id: near
+    name: NEAR Protocol
+    symbol: NEAR
+    coingecko_id: near
+    binance_symbol: NEARUSDT
+    chain: near
+    github:
+      - near/nearcore
+    trends_keyword: near protocol
+    twitter_project: NEARProtocol
+    twitter_ceo: ilblackdragon
+    wallets: []
+
+  - id: avalanche
+    name: Avalanche
+    symbol: AVAX
+    coingecko_id: avalanche-2
+    binance_symbol: AVAXUSDT
+    chain: avalanche
+    github:
+      - ava-labs/avalanchego
+    trends_keyword: avalanche crypto
+    twitter_project: avax
+    twitter_ceo: el33th4xor
+    wallets: []
+
+# Курируемый список авторитетных Twitter-аккаунтов (ф.6):
+# идейные сторонники vs проплаченные шиллеры. Заполняется вручную —
+# без платного X API автоматической проверки нет.
+twitter_curation:
+  solana: []
+    # - handle: someaccount
+    #   stance: idea        # idea = отстаивает идею | shill = платный шиллинг
+    #   note: "почему так считаем"
+  celestia: []
+  near: []
+  avalanche: []
+
+# Скринер (ф.3): фильтры отбора кандидатов из CoinGecko
+screener:
+  min_market_cap: 100000000        # ≥ $100M
+  max_market_cap: 20000000000      # ≤ $20B (не мегакапы)
+  min_volume_24h: 10000000         # ≥ $10M/сутки
+  max_fdv_mc_ratio: 3.0            # FDV/MC ≤ 3 (не сплошной навес разлоков)
+  categories:                      # интересующие категории CoinGecko (пусто = все)
+    - layer-1
+    - data-availability
+    - modular-blockchain
+
+# Веса композитного скора «лесенки» (этап 5). Сумма не обязана быть = 1.
+scoring:
+  github_activity: 1.0
+  trends_momentum: 1.0
+  mentions_momentum: 1.0
+  node_growth: 1.0
+  unlock_pressure: -1.0     # навес разлоков — штраф
+  team_selling: -1.5        # продажи команды — сильный штраф
+  smart_money: 1.5
+  discord_activity: 0.5
