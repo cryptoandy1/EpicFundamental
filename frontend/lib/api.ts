@@ -52,6 +52,10 @@ export interface ProjectDetail {
   trends_monthly: Point[];
   media_mentions: Point[];
   recent_mentions: { ts: string; title: string; url: string; domain: string; is_pr: boolean }[];
+  chain_tvl: Point[];
+  stablecoins_mcap: Point[];
+  dex_volume: Point[];
+  chain_fees: Point[];
   node_count: Point[];
   exchange_validators: Point[];
   validator_events: EventPoint[];

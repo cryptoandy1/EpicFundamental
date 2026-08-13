@@ -210,6 +210,10 @@ def project_detail(project_id: str, exclude_pr: bool = True):
                 }
                 for m in recent_mentions
             ],
+            "chain_tvl": _series(session, project_id, "chain_tvl_usd"),
+            "stablecoins_mcap": _series(session, project_id, "stablecoins_usd"),
+            "dex_volume": _series(session, project_id, "dex_volume_usd"),
+            "chain_fees": _series(session, project_id, "chain_fees_usd"),
             "node_count": _series(session, project_id, "node_count"),
             "exchange_validators": _series(session, project_id, "exchange_validators_count"),
             "validator_events": _events(session, project_id, "validator"),

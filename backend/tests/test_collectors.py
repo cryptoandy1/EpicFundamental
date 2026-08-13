@@ -107,6 +107,36 @@ def test_mentions_collector_filters_pr_domains(session, project, fake_http):
     assert mentions["prnewswire.com"] is True
 
 
+def test_defillama_collector(session, project, fake_http):
+    from app.collectors.defillama import DefiLlamaCollector
+
+    http = fake_http(
+        {
+            "historicalChainTvl": [
+                {"date": 1700000000, "tvl": 100.0},
+                {"date": 1700086400, "tvl": 120.0},
+            ],
+            "stablecoincharts": [
+                {"date": "1700000000", "totalCirculatingUSD": {"peggedUSD": 50.0, "peggedEUR": 5.0}},
+            ],
+            "overview/dexs": {"totalDataChart": [[1700000000, 7.0]]},
+            "overview/fees": {"totalDataChart": [[1700000000, 0.0]]},  # всё нули — пропуск
+        }
+    )
+    report = DefiLlamaCollector(session, http).backfill(project)
+
+    assert session.query(Metric).filter_by(metric="chain_tvl_usd").count() == 2
+    assert session.query(Metric).filter_by(metric="stablecoins_usd").one().value == 55.0
+    assert session.query(Metric).filter_by(metric="dex_volume_usd").count() == 1
+    assert session.query(Metric).filter_by(metric="chain_fees_usd").count() == 0
+    assert "chain_tvl_usd: 2" in report
+    assert "нулевой ряд" in report
+
+    # идемпотентность
+    DefiLlamaCollector(session, http).backfill(project)
+    assert session.query(Metric).filter_by(metric="chain_tvl_usd").count() == 2
+
+
 def test_scoring_percentiles(session, project):
     """Композитный скор: у монеты с бОльшими коммитами и меньшим навесом скор выше."""
     from app.models import Project

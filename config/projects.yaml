@@ -118,3 +118,5 @@ scoring:
   team_selling: -1.5        # продажи команды — сильный штраф
   smart_money: 1.5
   discord_activity: 0.5
+  tvl_momentum: 1.0         # DefiLlama: приток капитала в сеть (TVL, 28д/84д)
+  fees_momentum: 0.5        # DefiLlama: комиссии сети = реальное использование

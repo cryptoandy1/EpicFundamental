@@ -12,6 +12,8 @@ const FACTOR_LABELS: Record<string, string> = {
   team_selling: "Продажи команды (ф.7)",
   smart_money: "Smart money (ф.11)",
   discord_activity: "Discord (ф.12)",
+  tvl_momentum: "TVL momentum",
+  fees_momentum: "Комиссии momentum",
 };
 
 export default function LadderPage() {

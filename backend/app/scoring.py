@@ -117,6 +117,9 @@ def _factor_values(session: Session, project: Project) -> dict[str, float | None
         "team_selling": team_selling,
         "smart_money": _latest(session, project.id, "smart_money_fresh_share"),
         "discord_activity": _momentum(session, project.id, "discord_substantive_week", 28, 56),
+        # DefiLlama (бесплатные эндпоинты): деньги и использование сети
+        "tvl_momentum": _momentum(session, project.id, "chain_tvl_usd"),
+        "fees_momentum": _momentum(session, project.id, "chain_fees_usd"),
     }
 
 

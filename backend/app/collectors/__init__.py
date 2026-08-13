@@ -25,6 +25,7 @@ def get_collectors(names: list[str] | None = None) -> list[type[Collector]]:
         mentions,
         coinbase_app,
         social,
+        defillama,
     )
 
     if names:

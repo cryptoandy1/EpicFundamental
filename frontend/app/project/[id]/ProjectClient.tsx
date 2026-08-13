@@ -98,6 +98,31 @@ function useOptions(data: ProjectDetail | null, t: Tokens) {
         }
       : null;
 
+    // 3b. DefiLlama: капитал в сети (TVL + стейблкоины)
+    const defiCapital =
+      data.chain_tvl.length || data.stablecoins_mcap.length
+        ? {
+            ...base(),
+            series: [
+              lineSeries("TVL сети, $", data.chain_tvl),
+              lineSeries("Стейблкоины, $", data.stablecoins_mcap),
+            ],
+          }
+        : null;
+
+    // 3c. DefiLlama: использование сети (DEX-объёмы + комиссии, лог-шкала)
+    const defiUsage =
+      data.dex_volume.length || data.chain_fees.length
+        ? {
+            ...base(),
+            series: [
+              lineSeries("DEX-объём (нед.), $", weekly(data.dex_volume).filter(([, v]) => v > 0)),
+              lineSeries("Комиссии (нед.), $", weekly(data.chain_fees).filter(([, v]) => v > 0)),
+            ],
+            yAxis: { ...base().yAxis, type: "log" as const },
+          }
+        : null;
+
     // 4. Ноды + подключения биржевых валидаторов
     const nodes = data.node_count.length
       ? {
@@ -179,7 +204,7 @@ function useOptions(data: ProjectDetail | null, t: Tokens) {
       ? { ...base(), series: [lineSeries("Твитов CEO в неделю", data.ceo_tweets_week)] }
       : null;
 
-    return { price, unlocked, github, nodes, mentions, trends, outflow, discord, ceo };
+    return { price, unlocked, github, defiCapital, defiUsage, nodes, mentions, trends, outflow, discord, ceo };
   }, [data, t]);
 }
 
@@ -271,6 +296,18 @@ export default function ProjectClient({ id }: { id: string }) {
           "ф.5: коммиты в неделю, вся история (топ-100 контрибьюторов)",
           opts.github,
           "нет данных — backfill github (рекомендуется GITHUB_TOKEN)"
+        )}
+        {card(
+          "Капитал в сети (DefiLlama)",
+          "TVL сети и стейблкоины на ней — сколько денег «в обойме», вся история",
+          opts.defiCapital,
+          "нет данных — backfill defillama (у DA-сетей без смарт-контрактов TVL нет)"
+        )}
+        {card(
+          "Использование сети (DefiLlama)",
+          "недельные DEX-объёмы и комиссии сети, лог-шкала — реальная активность, не хайп",
+          opts.defiUsage,
+          "нет данных — backfill defillama (у DA-сетей нет DEX/комиссий в DefiLlama)"
         )}
         {card(
           "Ноды / валидаторы",
