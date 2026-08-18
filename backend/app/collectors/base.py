@@ -24,11 +24,13 @@ from ..models import Event, Metric, Project
 
 log = logging.getLogger("collectors")
 
-# Минимальный интервал между запросами к хосту, сек
+# Минимальный интервал между запросами к хосту, сек. Ключ — host или host+префикс
+# пути (более длинный ключ побеждает): у GitHub Search свой лимит 30 req/min.
 HOST_INTERVALS = {
     "api.coingecko.com": 2.5,
     "api.binance.com": 0.15,
     "api.github.com": 0.8,
+    "api.github.com/search": 2.1,
     "api.llama.fi": 0.5,
     "api.etherscan.io": 0.25,
     "api.gdeltproject.org": 6.0,  # GDELT жёстко режет частые запросы
@@ -50,13 +52,37 @@ class Http:
         )
         self._last_call: dict[str, float] = {}
 
+    @staticmethod
+    def _interval_key(url: str) -> tuple[str, float]:
+        """(ключ троттлинга, интервал): самый длинный подходящий префикс host+path."""
+        parsed = urlparse(url)
+        full = parsed.netloc + parsed.path
+        best_key, best_interval = parsed.netloc, HOST_INTERVALS.get(parsed.netloc, DEFAULT_INTERVAL)
+        for key, interval in HOST_INTERVALS.items():
+            if "/" in key and full.startswith(key) and len(key) > len(best_key):
+                best_key, best_interval = key, interval
+        return best_key, best_interval
+
     def _throttle(self, url: str) -> None:
-        host = urlparse(url).netloc
-        interval = HOST_INTERVALS.get(host, DEFAULT_INTERVAL)
-        elapsed = time.monotonic() - self._last_call.get(host, 0.0)
+        key, interval = self._interval_key(url)
+        elapsed = time.monotonic() - self._last_call.get(key, 0.0)
         if elapsed < interval:
             time.sleep(interval - elapsed)
-        self._last_call[host] = time.monotonic()
+        self._last_call[key] = time.monotonic()
+
+    @staticmethod
+    def _rate_limit_wait(resp: httpx.Response) -> float | None:
+        """GitHub сигналит исчерпание лимита 403/429 с X-RateLimit-Remaining: 0 —
+        ждём до X-RateLimit-Reset (не дольше 90с)."""
+        if resp.status_code not in (403, 429):
+            return None
+        if resp.headers.get("X-RateLimit-Remaining") != "0":
+            return None
+        try:
+            reset = float(resp.headers.get("X-RateLimit-Reset", "0"))
+        except ValueError:
+            reset = 0.0
+        return max(1.0, min(90.0, reset - time.time() + 1.0))
 
     def get(self, url: str, retries: int = 5, **kwargs) -> httpx.Response:
         backoff = 2.0
@@ -71,11 +97,12 @@ class Http:
                 time.sleep(backoff)
                 backoff *= 2
                 continue
-            if resp.status_code in (429, 500, 502, 503, 504):
+            limit_wait = self._rate_limit_wait(resp)
+            if limit_wait is not None or resp.status_code in (429, 500, 502, 503, 504):
                 if attempt == retries - 1:
                     resp.raise_for_status()
                 retry_after = resp.headers.get("Retry-After")
-                wait = float(retry_after) if retry_after else backoff
+                wait = limit_wait or (float(retry_after) if retry_after else backoff)
                 log.warning("%s -> %s, retry in %.0fs", url, resp.status_code, wait)
                 time.sleep(wait)
                 backoff *= 2

@@ -84,19 +84,23 @@ function useOptions(data: ProjectDetail | null, t: Tokens) {
         }
       : null;
 
-    // 3. GitHub vs аналоги (проект + до 3 пиров = максимум 4 серии)
-    const peerNames = Object.keys(data.github_peers).slice(0, 3);
-    const github = data.github_commits_week.length
-      ? {
-          ...base(),
-          series: [
-            lineSeries(data.project.symbol, data.github_commits_week, { lineStyle: { width: 2.5 } }),
-            ...peerNames.map((name) =>
-              lineSeries(name, data.github_peers[name], { lineStyle: { width: 1.5, opacity: 0.8 } })
-            ),
-          ],
-        }
-      : null;
+    // 3. GitHub vs аналоги (проект + до 3 пиров = максимум 4 серии): один шаблон на три ряда ф.5
+    const vsPeers = (own: Point[], peers: Record<string, Point[]>) => {
+      if (!own.length) return null;
+      const peerNames = Object.keys(peers).slice(0, 3);
+      return {
+        ...base(),
+        series: [
+          lineSeries(data.project.symbol, own, { lineStyle: { width: 2.5 } }),
+          ...peerNames.map((name) =>
+            lineSeries(name, peers[name], { lineStyle: { width: 1.5, opacity: 0.8 } })
+          ),
+        ],
+      };
+    };
+    const github = vsPeers(data.github_commits_week, data.github_peers);
+    const githubDevs = vsPeers(data.github_active_devs_week, data.github_devs_peers);
+    const githubEco = vsPeers(data.github_eco_new_repos_week, data.github_eco_peers);
 
     // 3b. DefiLlama: капитал в сети (TVL + стейблкоины)
     const defiCapital =
@@ -204,7 +208,21 @@ function useOptions(data: ProjectDetail | null, t: Tokens) {
       ? { ...base(), series: [lineSeries("Твитов CEO в неделю", data.ceo_tweets_week)] }
       : null;
 
-    return { price, unlocked, github, defiCapital, defiUsage, nodes, mentions, trends, outflow, discord, ceo };
+    return {
+      price,
+      unlocked,
+      github,
+      githubDevs,
+      githubEco,
+      defiCapital,
+      defiUsage,
+      nodes,
+      mentions,
+      trends,
+      outflow,
+      discord,
+      ceo,
+    };
   }, [data, t]);
 }
 
@@ -292,8 +310,20 @@ export default function ProjectClient({ id }: { id: string }) {
           "нужен DEFILLAMA_API_KEY или unlock_events в projects.yaml"
         )}
         {card(
-          "GitHub-активность vs аналоги",
-          "ф.5: коммиты в неделю, вся история (топ-100 контрибьюторов)",
+          "GitHub ядро: активные разработчики vs аналоги",
+          "ф.5: уникальные разработчики с ≥1 коммитом в неделю по репо ядра (без ботов). В лесенку идёт моментум 28д/84д этого ряда — разработка ОТ команды",
+          opts.githubDevs,
+          "нет данных — backfill github (рекомендуется GITHUB_TOKEN)"
+        )}
+        {card(
+          "GitHub экосистема: новые репозитории vs аналоги",
+          "ф.5: новые репо с топиком экосистемы в неделю (GitHub Search) — разработка НА платформе. В лесенку идёт моментум 12нед/24нед; у малых экосистем (<15 репо за базу) фактор пропускается",
+          opts.githubEco,
+          "нет данных — backfill github_eco (нужен github_topic в projects.yaml)"
+        )}
+        {card(
+          "GitHub ядро: коммиты vs аналоги",
+          "ф.5: коммиты в неделю по репо ядра, вся история — масштаб, не сила: зависит от монорепо и стиля коммитов",
           opts.github,
           "нет данных — backfill github (рекомендуется GITHUB_TOKEN)"
         )}

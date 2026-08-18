@@ -19,6 +19,7 @@ def get_collectors(names: list[str] | None = None) -> list[type[Collector]]:
         google_trends,
         funding,
         github_activity,
+        github_ecosystem,
         unlocks,
         wallets,
         nodes,

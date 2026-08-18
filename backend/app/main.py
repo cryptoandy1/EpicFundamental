@@ -51,6 +51,16 @@ def _series(session: Session, project_id: str, metric: str) -> list[list]:
     return [[ts.isoformat(), value] for ts, value in rows]
 
 
+def _peers(session: Session, project_id: str, metric: str, points: int = 104) -> dict[str, list[list]]:
+    """Ряды остальных монет пула по метрике (для графиков «vs аналоги»), хвост points точек."""
+    peers: dict[str, list[list]] = {}
+    for other in session.query(Project).filter(Project.approved, Project.id != project_id).all():
+        s = _series(session, other.id, metric)
+        if s:
+            peers[other.symbol] = s[-points:]
+    return peers
+
+
 def _events(session: Session, project_id: str, type_: str) -> list[dict]:
     rows = (
         session.query(Event)
@@ -153,13 +163,6 @@ def project_detail(project_id: str, exclude_pr: bool = True):
             )
             genesis = first_price[0] if first_price else None
 
-        # GitHub vs peers: недельные коммиты остальных монет пула (ф.5)
-        peers = {}
-        for other in session.query(Project).filter(Project.approved, Project.id != project_id).all():
-            s = _series(session, other.id, "github_commits_week")
-            if s:
-                peers[other.symbol] = s[-104:]  # 2 года
-
         # потоки кошельков команды (ф.7): недельные агрегаты + крупнейшие выводы
         top_outflows = (
             session.query(WalletFlow, Wallet)
@@ -195,8 +198,14 @@ def project_detail(project_id: str, exclude_pr: bool = True):
             "unlocked_total": _series(session, project_id, "unlocked_total"),
             "unlock_events": _events(session, project_id, "unlock"),
             "funding_events": _events(session, project_id, "funding"),
+            # GitHub (ф.5): ядро — коммиты и активные разработчики; экосистема — новые репо по топику;
+            # для каждого — ряды остальных монет пула за 2 года («vs аналоги»)
             "github_commits_week": _series(session, project_id, "github_commits_week"),
-            "github_peers": peers,
+            "github_peers": _peers(session, project_id, "github_commits_week"),
+            "github_active_devs_week": _series(session, project_id, "github_active_devs_week"),
+            "github_devs_peers": _peers(session, project_id, "github_active_devs_week"),
+            "github_eco_new_repos_week": _series(session, project_id, "github_eco_new_repos_week"),
+            "github_eco_peers": _peers(session, project_id, "github_eco_new_repos_week"),
             "trends_weekly": _series(session, project_id, "trends_weekly"),
             "trends_monthly": _series(session, project_id, "trends_monthly"),
             "media_mentions": _series(session, project_id, "media_mentions"),

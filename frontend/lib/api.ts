@@ -48,6 +48,10 @@ export interface ProjectDetail {
   funding_events: EventPoint[];
   github_commits_week: Point[];
   github_peers: Record<string, Point[]>;
+  github_active_devs_week: Point[];
+  github_devs_peers: Record<string, Point[]>;
+  github_eco_new_repos_week: Point[];
+  github_eco_peers: Record<string, Point[]>;
   trends_weekly: Point[];
   trends_monthly: Point[];
   media_mentions: Point[];

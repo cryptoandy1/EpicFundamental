@@ -6,7 +6,10 @@
 #   coingecko_id         — id на CoinGecko (для капы/объёма/genesis)
 #   binance_symbol       — пара на Binance для полной истории цены (напр. SOLUSDT)
 #   chain                — своя сеть (для коллектора нод) или сеть токена
-#   github               — список репозиториев "org/repo" (основные, 1-3 шт.)
+#   github               — список репозиториев "org/repo" (основные, 1-3 шт.) — ядро (ф.5)
+#   github_topic         — GitHub-топик экосистемы для ф.5 «разработка на платформе»
+#                          (новые репо с topic:<...> в неделю через Search API); по умолчанию = id.
+#                          Один топик на проект; проверено 2026-08-18 по населённости и шуму.
 #   trends_keyword       — запрос для Google Trends (обычно название)
 #   twitter_project      — @хэндл проекта (ручная курация, ф.6)
 #   twitter_ceo          — @хэндл CEO (ф.13, слот под X API / ручной ввод)
@@ -41,6 +44,7 @@ projects:
       - solana-labs/solana
       - anza-xyz/agave
     trends_keyword: solana
+    github_topic: solana   # 9.3k репо, ~85 новых/нед
     twitter_project: solana
     twitter_ceo: aeyakovenko
     discord_invite: solana
@@ -57,6 +61,7 @@ projects:
       - celestiaorg/celestia-node
       - celestiaorg/celestia-app
     trends_keyword: celestia crypto
+    github_topic: celestia   # ~9 новых/год — мало, фактор экосистемы будет пропущен до роста (делит топик со space-симулятором CelestiaProject)
     twitter_project: CelestiaOrg
     twitter_ceo: musalbas
     discord_invite: YsnTPcSfWQ
@@ -72,6 +77,7 @@ projects:
     github:
       - near/nearcore
     trends_keyword: near protocol
+    github_topic: near-protocol   # чище и живее, чем near (шум: ares-emulator и пр.) и nearprotocol
     twitter_project: NEARProtocol
     twitter_ceo: ilblackdragon
     discord_invite: nearprotocol
@@ -87,6 +93,7 @@ projects:
     github:
       - ava-labs/avalanchego
     trends_keyword: avalanche crypto
+    github_topic: avalanche   # ~2/нед; avax почти пуст
     twitter_project: avax
     twitter_ceo: el33th4xor
     discord_invite: avax
@@ -102,6 +109,7 @@ projects:
     github:
       - MystenLabs/sui
     trends_keyword: sui crypto
+    github_topic: sui   # ~7/нед
     twitter_project: SuiNetwork
     twitter_ceo: EvanWeb3
     discord_invite: sui
@@ -117,6 +125,7 @@ projects:
     github:
       - aptos-labs/aptos-core
     trends_keyword: aptos
+    github_topic: aptos   # ~2/нед
     twitter_project: Aptos
     twitter_ceo: averyching
     discord_invite: aptosnetwork
@@ -132,6 +141,7 @@ projects:
     github:
       - sei-protocol/sei-chain
     trends_keyword: sei crypto
+    github_topic: sei-network   # topic:sei забит бразильской системой SEI и видеокодеками; sei-network чистый, но ~1/год — фактор пропущен до роста
     twitter_project: SeiNetwork
     twitter_ceo: jayendra_jog
     discord_invite: sei
@@ -149,6 +159,7 @@ projects:
       - InjectiveLabs/injective-ts
       - InjectiveLabs/sdk-go
     trends_keyword: injective
+    github_topic: injective   # ~1/нед; injective-protocol почти пуст
     twitter_project: injective
     twitter_ceo: ericinjective
     discord_invite: injective
@@ -166,6 +177,7 @@ projects:
     github:
       - RaoFoundation/subtensor
     trends_keyword: bittensor
+    github_topic: bittensor   # ~2/нед, субнеты
     twitter_project: opentensor
     twitter_ceo: const_reborn
     discord_invite: bittensor
@@ -202,7 +214,8 @@ screener:
 
 # Веса композитного скора «лесенки» (этап 5). Сумма не обязана быть = 1.
 scoring:
-  github_activity: 1.0
+  github_core_devs: 0.5     # ядро: моментум активных разработчиков команды, 28д/84д (ф.5)
+  github_ecosystem: 1.0     # экосистема: моментум новых репо по топику 12нед/24нед — разработка НА платформе (ф.5)
   trends_momentum: 1.0
   mentions_momentum: 1.0
   node_growth: 1.0

@@ -62,8 +62,23 @@ class FakeHttp:
     def post_json(self, url: str, payload: Any, **kwargs) -> Any:
         return self._find(url, payload)
 
-    def get(self, url: str, **kwargs):  # pragma: no cover — для полноты интерфейса
-        raise AssertionError("сырой get в тестах не используется")
+    def get(self, url: str, **kwargs):
+        """Сырой get (нужен GitHub-коллектору ради кода 202): 200 + .json() из фикстуры."""
+        payload = self._find(url, kwargs.get("params"))
+        return FakeResponse(payload)
+
+
+class FakeResponse:
+    status_code = 200
+
+    def __init__(self, payload: Any):
+        self._payload = payload
+
+    def json(self) -> Any:
+        return self._payload
+
+    def raise_for_status(self) -> None:
+        return None
 
 
 @pytest.fixture()

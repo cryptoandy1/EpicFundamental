@@ -4,7 +4,8 @@ import { useEffect, useState } from "react";
 import { api, LadderRow } from "@/lib/api";
 
 const FACTOR_LABELS: Record<string, string> = {
-  github_activity: "GitHub (ф.5)",
+  github_core_devs: "GitHub ядро: активные разработчики, momentum (ф.5)",
+  github_ecosystem: "GitHub экосистема: новые репо, momentum (ф.5)",
   trends_momentum: "Trends momentum (ф.14)",
   mentions_momentum: "СМИ momentum (ф.10)",
   node_growth: "Рост нод (ф.8)",

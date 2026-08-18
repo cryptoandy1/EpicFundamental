@@ -3,6 +3,12 @@
 Каждый фактор нормализуется в перцентиль 0..100 по пулу, затем взвешенная
 сумма (веса — в projects.yaml -> scoring; отрицательный вес = штраф).
 Факторы без данных не учитываются (скор считается по доступным).
+
+Почти все факторы — моментум (среднее за 28 дней / среднее за предыдущие 84):
+для очерёдности входа важно ускорение, а не масштаб. GitHub разделён на
+github_core_devs (уникальные активные разработчики ядра в неделю, 28д/84д) и
+github_ecosystem (новые репозитории с топиком экосистемы в неделю, 84д/168д с
+порогом объёма — у малых экосистем счётчик редкий).
 """
 from __future__ import annotations
 
@@ -12,6 +18,9 @@ from sqlalchemy.orm import Session
 
 from .config import load_config
 from .models import Event, Metric, Project, Wallet, WalletFlow
+
+
+ECO_MIN_BASE_REPOS = 15  # минимум новых репо за базовые 24 недели, чтобы считать моментум экосистемы
 
 
 def _now() -> datetime:
@@ -37,8 +46,19 @@ def _latest(session: Session, project_id: str, metric: str) -> float | None:
     return row[0] if row else None
 
 
-def _momentum(session: Session, project_id: str, metric: str, recent_days: int = 28, base_days: int = 84) -> float | None:
-    """Среднее за последние recent_days / среднее за base_days до них."""
+def _momentum(
+    session: Session,
+    project_id: str,
+    metric: str,
+    recent_days: int = 28,
+    base_days: int = 84,
+    min_base_total: float = 0.0,
+) -> float | None:
+    """Среднее за последние recent_days / среднее за base_days до них.
+
+    min_base_total — минимальная СУММА значений в базовом окне: моментум редких
+    счётчиков (1–2 события в квартал) — шум, а не сигнал; ниже порога -> None
+    (фактор честно исключается из скора)."""
     now = _now()
     recent = (
         session.query(Metric.value)
@@ -60,6 +80,8 @@ def _momentum(session: Session, project_id: str, metric: str, recent_days: int =
         .all()
     )
     if not recent or not base:
+        return None
+    if sum(r[0] for r in base) < min_base_total:
         return None
     recent_avg = sum(r[0] for r in recent) / len(recent)
     base_avg = sum(r[0] for r in base) / len(base)
@@ -109,7 +131,13 @@ def _factor_values(session: Session, project: Project) -> dict[str, float | None
     node_growth = node_now / node_old[0] if node_now and node_old and node_old[0] else None
 
     return {
-        "github_activity": _series_sum(session, project.id, "github_commits_week", now - timedelta(days=84)),
+        # GitHub (ф.5) — два фактора: ядро (разработка ОТ команды) и экосистема (разработка НА платформе)
+        "github_core_devs": _momentum(session, project.id, "github_active_devs_week"),
+        # экосистема: окна длиннее (12 нед / 24 нед) и порог базы — новые репо у малых
+        # экосистем редки, недельный моментум 28/84 был бы случайным числом
+        "github_ecosystem": _momentum(
+            session, project.id, "github_eco_new_repos_week", 84, 168, min_base_total=ECO_MIN_BASE_REPOS
+        ),
         "trends_momentum": _momentum(session, project.id, "trends_weekly"),
         "mentions_momentum": _momentum(session, project.id, "media_mentions"),
         "node_growth": node_growth,
