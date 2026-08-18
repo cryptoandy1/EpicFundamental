@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from app.collectors.market import MarketCollector
 from app.collectors.mentions import MentionsCollector
 from app.collectors.nodes import NodesCollector
@@ -343,3 +345,271 @@ def test_discord_heuristic():
     assert not _heuristic_substantive("🚀🚀🚀")
     assert _heuristic_substantive("How does data availability sampling work on light nodes?")
     assert _heuristic_substantive("Why did the validator set shrink after the upgrade?")
+
+
+# --- Nansen (ф.11) ---
+
+
+def _nansen_http(fake_http, **overrides):
+    """Фикстуры ответов Nansen: перп-скринер (sm/all), position-intelligence, flow-intelligence, спот."""
+    perp_sm = {
+        "data": [
+            {
+                "token_symbol": "TST",
+                "current_smart_money_position_longs_usd": 300.0,
+                "current_smart_money_position_shorts_usd": -100.0,
+                "smart_money_longs_count": 4,
+                "smart_money_shorts_count": 2,
+                "net_position_change": 55.0,
+                "trader_count": 6,
+            },
+            {"token_symbol": "OTHER", "current_smart_money_position_longs_usd": 1.0},
+        ]
+    }
+    perp_all = {
+        "data": [
+            {
+                "token_symbol": "TST",
+                "funding": 0.0001,
+                "open_interest": 1_000_000.0,
+                "volume": 500_000.0,
+                "buy_sell_pressure": -20_000.0,
+                "trader_count": 900,
+            }
+        ]
+    }
+    responses = {
+        "'trader_type': 'sm'": perp_sm,
+        "'trader_type': 'all'": perp_all,
+        "position-intelligence": {
+            "data": [
+                {
+                    "whale_longs_usd": 10.0,
+                    "whale_shorts_usd": 4.0,
+                    "public_figure_longs_usd": 2.0,
+                    "public_figure_shorts_usd": 1.0,
+                }
+            ]
+        },
+        "flow-intelligence": {
+            "data": [
+                {
+                    "exchange_net_flow_usd": -5000.0,
+                    "exchange_wallet_count": 0,
+                    "fresh_wallets_net_flow_usd": 8000.0,
+                    "fresh_wallets_wallet_count": 0,
+                    "top_pnl_net_flow_usd": 12.0,
+                    "top_pnl_wallet_count": 3,
+                    "whale_net_flow_usd": -7.0,
+                    "public_figure_net_flow_usd": 0.0,
+                    # баг Nansen: одно значение на все EVM-сети — не должно попадать в метрики
+                    "smart_trader_net_flow_usd": 6270444.0,
+                    "smart_trader_wallet_count": 336,
+                }
+            ]
+        },
+        "smart-money/holdings": {
+            "data": [{"chain": "solana", "token_symbol": "TST", "value_usd": 777.0, "holders_count": 12}]
+        },
+        "smart-money/netflow": {
+            "data": [
+                {
+                    "chain": "solana",
+                    "token_symbol": "TST",
+                    "net_flow_7d_usd": -3.0,
+                    "net_flow_30d_usd": 9.0,
+                    "trader_count": 5,
+                },
+                {"chain": "solana", "token_symbol": "NOTOURS", "net_flow_7d_usd": 1.0},
+            ]
+        },
+        "/account": {"plan": "pro", "credits_remaining": 1999},
+    }
+    responses.update(overrides)
+    return fake_http(responses)
+
+
+@pytest.fixture()
+def nansen_project(session, monkeypatch):
+    from app.collectors import nansen as mod
+    from app.models import Project
+
+    p = Project(id="testcoin", name="Testcoin", symbol="TST", chain="solana")
+    session.add(p)
+    session.commit()
+    monkeypatch.setenv("NANSEN_API_KEY", "test-key")
+    monkeypatch.setattr(mod, "nansen_of", lambda proj: {"chain": "solana", "token_address": "So111"})
+    monkeypatch.setattr(mod, "hl_symbol", lambda proj: "TST")
+    return p
+
+
+def test_nansen_collector_writes_all_groups(session, nansen_project, fake_http):
+    from app.collectors.nansen import NansenCollector
+
+    http = _nansen_http(fake_http)
+    report = NansenCollector(session, http).backfill()
+
+    values = {m.metric: m.value for m in session.query(Metric).all()}
+    # перпы: skew = (300-100)/(300+100)
+    assert values["nansen_perp_sm_skew"] == 0.5
+    assert values["nansen_perp_sm_longs_usd"] == 300.0
+    assert values["nansen_perp_sm_shorts_usd"] == 100.0  # модуль
+    assert values["nansen_perp_funding"] == 0.0001
+    assert values["nansen_perp_oi_usd"] == 1_000_000.0
+    # киты
+    assert values["nansen_perp_whale_longs_usd"] == 10.0
+    # потоки: exchange/fresh есть, smart_trader (баг) — нет
+    assert values["nansen_fi7d_exchange_netflow_usd"] == -5000.0
+    assert values["nansen_fi7d_fresh_wallets_netflow_usd"] == 8000.0
+    assert values["nansen_fi7d_top_pnl_wallets"] == 3
+    assert not [m for m in values if "smart_trader" in m]
+    # спот: только совпавший символ
+    assert values["nansen_sm_holdings_usd"] == 777.0
+    assert values["nansen_sm_netflow_30d_usd"] == 9.0
+    # остаток кредитов записан рыночной метрикой
+    credits = session.query(Metric).filter_by(project_id="_market", metric="nansen_credits_remaining").one()
+    assert credits.value == 1999
+    assert "перпы 1/1" in report
+
+
+def test_nansen_skips_coin_without_perp_row(session, nansen_project, fake_http, monkeypatch):
+    from app.collectors import nansen as mod
+    from app.collectors.nansen import NansenCollector
+
+    monkeypatch.setattr(mod, "hl_symbol", lambda proj: "UNKNOWN")
+    monkeypatch.setattr(mod, "nansen_of", lambda proj: None)  # сеть не покрыта
+    NansenCollector(session, _nansen_http(fake_http)).backfill()
+
+    assert session.query(Metric).filter(Metric.metric.like("nansen_perp_%")).count() == 0
+    assert session.query(Metric).filter(Metric.metric.like("nansen_fi7d_%")).count() == 0
+
+
+def test_nansen_update_respects_interval(session, nansen_project, fake_http, monkeypatch):
+    from app.collectors.nansen import NansenCollector
+
+    monkeypatch.setenv("NANSEN_MIN_INTERVAL_DAYS", "7")
+    NansenCollector(session, _nansen_http(fake_http)).backfill()
+    before = session.query(Metric).count()
+
+    http2 = _nansen_http(fake_http)
+    report = NansenCollector(session, http2).update()
+    assert "пропуск" in report and "0 дн. назад" in report
+    assert http2.calls == []  # кредиты не потрачены
+    assert session.query(Metric).count() == before
+
+
+def test_nansen_stops_below_credit_reserve(session, nansen_project, fake_http, monkeypatch):
+    from app.collectors.nansen import NansenCollector
+
+    monkeypatch.setenv("NANSEN_MIN_CREDITS", "5000")  # резерв выше остатка
+    http = _nansen_http(fake_http)
+    report = NansenCollector(session, http).backfill()
+    assert "пропуск" in report
+    assert session.query(Metric).filter(Metric.metric.like("nansen_perp_%")).count() == 0
+
+
+def test_scoring_nansen_factors(session, project):
+    """Потоки нормируются на капитализацию; skew при когорте < 5 аккаунтов — None."""
+    from app.scoring import _factor_values
+
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    session.add(Metric(project_id="testcoin", metric="market_cap", ts=now, value=1000.0))
+    for days in (1, 8):
+        ts = now - timedelta(days=days)
+        session.add(Metric(project_id="testcoin", metric="nansen_fi7d_fresh_wallets_netflow_usd", ts=ts, value=100.0))
+        session.add(Metric(project_id="testcoin", metric="nansen_fi7d_exchange_netflow_usd", ts=ts, value=-50.0))
+        session.add(Metric(project_id="testcoin", metric="nansen_perp_sm_skew", ts=ts, value=0.4))
+    session.add(Metric(project_id="testcoin", metric="nansen_perp_sm_longs_count", ts=now, value=2))
+    session.add(Metric(project_id="testcoin", metric="nansen_perp_sm_shorts_count", ts=now, value=1))
+    session.commit()
+
+    values = _factor_values(session, project)
+    assert values["fresh_wallets_flow"] == 0.1  # 100 / 1000
+    assert values["exchange_flow"] == -0.05
+    assert values["sm_perp_skew"] is None  # 3 аккаунта < 5
+
+    shorts = (
+        session.query(Metric)
+        .filter_by(project_id="testcoin", metric="nansen_perp_sm_shorts_count")
+        .one()
+    )
+    shorts.value = 8  # когорта выросла до 10 аккаунтов
+    session.commit()
+    assert _factor_values(session, project)["sm_perp_skew"] == 0.4
+
+
+def test_ladder_neutral_percentile_and_coverage(session, project):
+    """Фактор без данных = нейтральные 50 с полным весом; coverage показывает долю реальных данных."""
+    from app.models import Project
+    from app.scoring import compute_ladder
+
+    other = Project(id="othercoin", name="Othercoin", symbol="OTH", chain="near")
+    session.add(other)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    for week in range(16):
+        ts = now - timedelta(days=7 * week + 1)
+        recent = week < 4
+        session.add(
+            Metric(project_id="testcoin", metric="github_active_devs_week", ts=ts, value=20 if recent else 10)
+        )
+        session.add(
+            Metric(project_id="othercoin", metric="github_active_devs_week", ts=ts, value=50 if recent else 100)
+        )
+    session.commit()
+
+    rows = {r["project"]: r for r in compute_ladder(session)}
+    missing = rows["testcoin"]["factors"]["tvl_momentum"]
+    assert missing["percentile"] is None and missing["imputed"] == 50
+    assert 0 < rows["testcoin"]["coverage"] < 1
+    assert rows["testcoin"]["factors_available"] == 1
+    # у обеих монет данных поровну — порядок определяется реальным фактором
+    assert rows["testcoin"]["score"] > rows["othercoin"]["score"]
+
+
+def test_nansen_light_run_skips_heavy_parts(session, nansen_project, fake_http, monkeypatch):
+    """Ежедневный прогон: перпы и потоки да, киты и спот — только раз в NANSEN_FULL_INTERVAL_DAYS."""
+    from app.collectors.nansen import NansenCollector
+
+    monkeypatch.setenv("NANSEN_MIN_INTERVAL_DAYS", "1")
+    monkeypatch.setenv("NANSEN_FULL_INTERVAL_DAYS", "7")
+    NansenCollector(session, _nansen_http(fake_http)).backfill()  # полный: пишет обе отметки
+    assert session.query(Metric).filter_by(project_id="_market", metric="nansen_run_full").count() == 1
+
+    # день спустя: лёгкий прогон — тяжёлые вызовы не делаются
+    from app.collectors import nansen as mod
+
+    monkeypatch.setattr(mod, "_today", lambda: datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=1))
+    http2 = _nansen_http(fake_http)
+    report = NansenCollector(session, http2).update()
+    assert "лёгкий прогон" in report
+    assert not [c for c in http2.calls if "position-intelligence" in c or "smart-money" in c]
+    assert [c for c in http2.calls if "perp-screener" in c] and [c for c in http2.calls if "flow-intelligence" in c]
+
+    # неделю спустя — снова полный
+    monkeypatch.setattr(mod, "_today", lambda: datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=8))
+    http3 = _nansen_http(fake_http)
+    NansenCollector(session, http3).update()
+    assert [c for c in http3.calls if "position-intelligence" in c]
+    assert [c for c in http3.calls if "smart-money/holdings" in c]
+
+
+def test_nansen_full_run_not_blocked_by_daily_light(session, nansen_project, fake_http, monkeypatch):
+    """Ежедневный лёгкий прогон не должен мешать недельному полному запуститься в свой день."""
+    from app.collectors import nansen as mod
+    from app.collectors.nansen import NansenCollector
+
+    monkeypatch.setenv("NANSEN_MIN_INTERVAL_DAYS", "1")
+    monkeypatch.setenv("NANSEN_FULL_INTERVAL_DAYS", "7")
+    start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
+    NansenCollector(session, _nansen_http(fake_http)).backfill()
+
+    for day in range(1, 7):  # шесть лёгких прогонов подряд
+        monkeypatch.setattr(mod, "_today", lambda d=day: start + timedelta(days=d))
+        NansenCollector(session, _nansen_http(fake_http)).update()
+
+    # седьмой день: лёгкая часть уже обновлялась, но полная просрочена — прогон должен быть полным
+    monkeypatch.setattr(mod, "_today", lambda: start + timedelta(days=7))
+    http = _nansen_http(fake_http)
+    NansenCollector(session, http).update()
+    assert [c for c in http.calls if "position-intelligence" in c]
+    assert [c for c in http.calls if "smart-money/holdings" in c]

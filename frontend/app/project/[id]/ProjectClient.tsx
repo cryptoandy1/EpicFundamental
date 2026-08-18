@@ -203,6 +203,49 @@ function useOptions(data: ProjectDetail | null, t: Tokens) {
         })()
       : null;
 
+    // 8b. Nansen: нетто-потоки за 7 дней по сегментам (последний снапшот)
+    const nansenFlowSegments: [string, string][] = [
+      ["exchange_netflow_usd", "Биржи"],
+      ["fresh_wallets_netflow_usd", "Свежие кошельки"],
+      ["top_pnl_netflow_usd", "Top PnL"],
+      ["whale_netflow_usd", "Киты"],
+      ["public_figure_netflow_usd", "Публичные фигуры"],
+    ];
+    const flowBars: Point[] = nansenFlowSegments
+      .filter(([key]) => data.nansen?.flows7d?.[key] !== undefined)
+      .map(([key, label]) => [label, data.nansen.flows7d[key].value]);
+    const nansenFlows = flowBars.length
+      ? {
+          ...base(),
+          xAxis: { ...base().xAxis, type: "category" as const, data: flowBars.map(([l]) => l) },
+          series: [
+            barSeries(
+              "Нетто-поток 7д, $",
+              flowBars,
+              {
+                itemStyle: {
+                  color: (params: { value: [string, number] }) =>
+                    params.value[1] >= 0 ? t.good : t.critical,
+                },
+              }
+            ),
+          ],
+        }
+      : null;
+
+    // 8c. Nansen: перекос позиций Smart Money на перпах Hyperliquid (копится понедельно)
+    const nansenSkew = data.nansen?.perp_skew_series?.length
+      ? {
+          ...base(),
+          series: [
+            lineSeries("Smart money: (лонги−шорты)/(лонги+шорты)", data.nansen.perp_skew_series, {
+              lineStyle: { width: 2.5 },
+            }),
+          ],
+          yAxis: { ...base().yAxis, min: -1, max: 1 },
+        }
+      : null;
+
     // 9. Активность CEO (ручной ввод)
     const ceo = data.ceo_tweets_week.length
       ? { ...base(), series: [lineSeries("Твитов CEO в неделю", data.ceo_tweets_week)] }
@@ -211,6 +254,8 @@ function useOptions(data: ProjectDetail | null, t: Tokens) {
     return {
       price,
       unlocked,
+      nansenFlows,
+      nansenSkew,
       github,
       githubDevs,
       githubEco,
@@ -245,6 +290,14 @@ export default function ProjectClient({ id }: { id: string }) {
   const lastNodes = data.node_count.at(-1);
   const lastExchangeValidators = data.exchange_validators.at(-1);
   const lastSmart = data.smart_money_fresh_share.at(-1);
+  const nansen = data.nansen;
+  const perp = nansen?.perp ?? {};
+  const perpSkew = perp["sm_skew"]?.value;
+  const perpLongs = perp["sm_longs_usd"]?.value ?? 0;
+  const perpShorts = perp["sm_shorts_usd"]?.value ?? 0;
+  const perpAccounts = (perp["sm_longs_count"]?.value ?? 0) + (perp["sm_shorts_count"]?.value ?? 0);
+  const smSpot = nansen?.sm_spot ?? {};
+  const hasSmSpot = smSpot["holdings_usd"] !== undefined;
   const age = p.genesis_date
     ? `${((Date.now() - new Date(p.genesis_date).getTime()) / 31557600000).toFixed(1)} лет`
     : "н/д";
@@ -290,11 +343,42 @@ export default function ProjectClient({ id }: { id: string }) {
           </div>
         </div>
         <div className="stat">
-          <div className="label">Smart money (ф.11)</div>
-          <div className="value">{lastSmart ? `${(lastSmart[1] * 100).toFixed(0)}%` : "—"}</div>
-          <div className="hint">доля объёма на свежие кошельки</div>
+          <div className="label">Smart money на перпах (ф.11)</div>
+          <div className="value">
+            {perpSkew !== undefined ? (perpSkew > 0 ? "+" : "") + perpSkew.toFixed(2) : "—"}
+          </div>
+          <div className="hint">
+            {perpAccounts > 0
+              ? `${fmtUsd(perpLongs)} лонг / ${fmtUsd(perpShorts)} шорт, ${perpAccounts} аккаунтов`
+              : "Nansen: активных SM-позиций нет"}
+          </div>
+        </div>
+        <div className="stat">
+          <div className="label">Свежие кошельки 7д (ф.11)</div>
+          <div className="value">
+            {nansen?.flows7d?.["fresh_wallets_netflow_usd"]
+              ? fmtUsd(nansen.flows7d["fresh_wallets_netflow_usd"].value)
+              : "—"}
+          </div>
+          <div className="hint">
+            {nansen?.flows7d?.["exchange_netflow_usd"]
+              ? `биржи: ${fmtUsd(nansen.flows7d["exchange_netflow_usd"].value)} (+ = навес)`
+              : lastSmart
+                ? `эвристика Etherscan: ${(lastSmart[1] * 100).toFixed(0)}% свежих`
+                : "сеть не покрыта Nansen"}
+          </div>
         </div>
       </div>
+
+      {hasSmSpot && (
+        <p style={{ color: "var(--muted)", fontSize: 13 }}>
+          <b>Smart money на споте (Nansen):</b> холдинги {fmtUsd(smSpot["holdings_usd"].value)}
+          {smSpot["holders"] ? `, ${smSpot["holders"].value} кошельков` : ""}
+          {smSpot["netflow_7d_usd"] ? `; поток 7д ${fmtUsd(smSpot["netflow_7d_usd"].value)}` : ""}
+          {smSpot["netflow_30d_usd"] ? `, 30д ${fmtUsd(smSpot["netflow_30d_usd"].value)}` : ""}
+          {smSpot["traders_30d"] ? ` (${smSpot["traders_30d"].value} трейдеров за 30д)` : ""}
+        </p>
+      )}
 
       <div className="grid2">
         {card(
@@ -326,6 +410,18 @@ export default function ProjectClient({ id }: { id: string }) {
           "ф.5: коммиты в неделю по репо ядра, вся история — масштаб, не сила: зависит от монорепо и стиля коммитов",
           opts.github,
           "нет данных — backfill github (рекомендуется GITHUB_TOKEN)"
+        )}
+        {card(
+          "Nansen: потоки за 7 дней по сегментам",
+          "ф.11: нетто-поток в USD. Приток на свежие кошельки = аккумуляция (в скоре +1.0), приток на биржи = навес продаж (−0.5); оба нормируются на капитализацию",
+          opts.nansenFlows,
+          "нет данных — backfill nansen (сеть монеты может не индексироваться Nansen)"
+        )}
+        {card(
+          "Smart money на перпах Hyperliquid",
+          "ф.11: (лонги−шорты)/(лонги+шорты) по кошелькам Smart Money, +1 = только лонги. История копится понедельно; при когорте < 5 аккаунтов фактор считается шумом и в скор не идёт",
+          opts.nansenSkew,
+          "нет данных — backfill nansen"
         )}
         {card(
           "Капитал в сети (DefiLlama)",

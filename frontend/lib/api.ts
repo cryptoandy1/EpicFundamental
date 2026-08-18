@@ -9,6 +9,19 @@ export interface MarketOverview {
   sell_signal: boolean;
   coinbase_rank_overall: Point[];
   coinbase_rank_finance: Point[];
+  nansen_credits_remaining: number | null;
+}
+
+/** Последнее значение метрики группы: {имя без префикса: {value, ts}} */
+export type LatestMap = Record<string, { value: number; ts: string }>;
+
+export interface NansenBlock {
+  perp: LatestMap;
+  perp_skew_series: Point[];
+  flows7d: LatestMap;
+  exchange_flow_series: Point[];
+  fresh_flow_series: Point[];
+  sm_spot: LatestMap;
 }
 
 export interface ProjectSummary {
@@ -75,6 +88,7 @@ export interface ProjectDetail {
     tx_hash: string;
   }[];
   smart_money_fresh_share: Point[];
+  nansen: NansenBlock;
   discord_messages_week: Point[];
   discord_substantive_week: Point[];
   ceo_tweets_week: Point[];
@@ -101,7 +115,14 @@ export interface LadderRow {
   name: string;
   symbol: string;
   score: number | null;
-  factors: Record<string, { value: number | null; percentile: number | null; weight: number }>;
+  /** доля суммы |весов|, стоящая на реальных данных (остальное — нейтральные 50) */
+  coverage: number;
+  factors_available: number;
+  factors_total: number;
+  factors: Record<
+    string,
+    { value: number | null; percentile: number | null; imputed?: number; weight: number }
+  >;
 }
 
 // Статическая сборка (GitHub Pages): вместо живого API читаем JSON-снапшоты,

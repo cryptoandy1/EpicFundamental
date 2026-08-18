@@ -9,6 +9,7 @@ backend/.env
 # Локальная БД и логи сборки — наружу уходят только JSON-снапшоты (frontend/public/data)
 backend/data/
 backend/backfill*.txt
+backend/logs/
 
 # Скачанные бинарники (DiscordChatExporter и т.п.)
 tools/
@@ -21,3 +22,6 @@ frontend/next-env.d.ts
 
 # Артефакт tsc --noEmit
 frontend/tsconfig.tsbuildinfo
+
+# Локальные настройки Claude Code (создаются автоматически)
+.claude/

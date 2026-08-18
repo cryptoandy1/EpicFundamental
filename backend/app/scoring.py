@@ -8,7 +8,14 @@
 для очерёдности входа важно ускорение, а не масштаб. GitHub разделён на
 github_core_devs (уникальные активные разработчики ядра в неделю, 28д/84д) и
 github_ecosystem (новые репозитории с топиком экосистемы в неделю, 84д/168д с
-порогом объёма — у малых экосистем счётчик редкий).
+порогом объёма — у малых экосистем счётчик редкий). Факторы Nansen (ф.11) —
+средние недельных снапшотов за 28 дней: потоки нормируются на капитализацию,
+чтобы монеты разного размера были сравнимы.
+
+Фактор без данных получает НЕЙТРАЛЬНЫЙ перцентиль 50 и участвует в скоре с полным
+весом: «не знаем» не должно ни помогать, ни вредить. (Раньше такой фактор выпадал
+из знаменателя, что неявно приписывало ему средний уровень самой монеты по остальным
+факторам.) Доля веса, стоящая на реальных данных, возвращается как `coverage`.
 """
 from __future__ import annotations
 
@@ -20,6 +27,7 @@ from .config import load_config
 from .models import Event, Metric, Project, Wallet, WalletFlow
 
 
+NEUTRAL_PERCENTILE = 50.0  # перцентиль фактора без данных: «не знаем» = ни плюс, ни минус
 ECO_MIN_BASE_REPOS = 15  # минимум новых репо за базовые 24 недели, чтобы считать моментум экосистемы
 
 
@@ -88,6 +96,36 @@ def _momentum(
     return recent_avg / base_avg if base_avg else None
 
 
+def _avg_recent(session: Session, project_id: str, metric: str, days: int = 28) -> float | None:
+    """Среднее значений метрики за последние `days` (снапшоты Nansen — недельные)."""
+    rows = (
+        session.query(Metric.value)
+        .filter(
+            Metric.project_id == project_id,
+            Metric.metric == metric,
+            Metric.ts >= _now() - timedelta(days=days),
+        )
+        .all()
+    )
+    return sum(r[0] for r in rows) / len(rows) if rows else None
+
+
+def _per_market_cap(session: Session, project_id: str, metric: str, days: int = 28) -> float | None:
+    """Средний поток за окно, нормированный на капитализацию — сравнимо между монетами."""
+    flow = _avg_recent(session, project_id, metric, days)
+    cap = _latest(session, project_id, "market_cap")
+    return flow / cap if flow is not None and cap else None
+
+
+def _sm_perp_skew(session: Session, project_id: str, min_accounts: int = 5) -> float | None:
+    """Перекос позиций Smart Money на перпах; при когорте < min_accounts — шум, None."""
+    longs = _latest(session, project_id, "nansen_perp_sm_longs_count") or 0
+    shorts = _latest(session, project_id, "nansen_perp_sm_shorts_count") or 0
+    if longs + shorts < min_accounts:
+        return None
+    return _avg_recent(session, project_id, "nansen_perp_sm_skew")
+
+
 def _factor_values(session: Session, project: Project) -> dict[str, float | None]:
     now = _now()
     q90 = now - timedelta(days=90)
@@ -143,7 +181,11 @@ def _factor_values(session: Session, project: Project) -> dict[str, float | None
         "node_growth": node_growth,
         "unlock_pressure": unlock_pressure,
         "team_selling": team_selling,
-        "smart_money": _latest(session, project.id, "smart_money_fresh_share"),
+        # Nansen (ф.11): потоки за 7д на капитализацию (среднее снапшотов за 28д) и
+        # перекос позиций Smart Money на перпах Hyperliquid
+        "fresh_wallets_flow": _per_market_cap(session, project.id, "nansen_fi7d_fresh_wallets_netflow_usd"),
+        "exchange_flow": _per_market_cap(session, project.id, "nansen_fi7d_exchange_netflow_usd"),
+        "sm_perp_skew": _sm_perp_skew(session, project.id),
         "discord_activity": _momentum(session, project.id, "discord_substantive_week", 28, 56),
         # DefiLlama (бесплатные эндпоинты): деньги и использование сети
         "tvl_momentum": _momentum(session, project.id, "chain_tvl_usd"),
@@ -159,34 +201,47 @@ def _percentile(values: list[float], v: float) -> float:
 
 
 def compute_ladder(session: Session) -> list[dict]:
-    """[{project, score, factors: {name: {value, percentile, weight}}}] по убыванию скора."""
+    """[{project, score, coverage, factors: {name: {value, percentile, weight}}}] по убыванию скора.
+
+    coverage — доля суммы |весов|, стоящая на реальных данных (остальное — нейтральные 50)."""
     weights = (load_config().get("scoring") or {})
     projects = session.query(Project).filter_by(approved=True).all()
     raw = {p.id: _factor_values(session, p) for p in projects}
 
     results = []
     for p in projects:
-        total, weight_sum = 0.0, 0.0
+        total, weight_sum, known_weight = 0.0, 0.0, 0.0
         factors = {}
         for factor, weight in weights.items():
             value = raw[p.id].get(factor)
             pool = [raw[o.id][factor] for o in projects if raw[o.id].get(factor) is not None]
+            weight_sum += abs(weight)
             if value is None or not pool:
-                factors[factor] = {"value": None, "percentile": None, "weight": weight}
+                # нет данных — нейтральные 50, вес учитывается (не помогает и не вредит)
+                total += NEUTRAL_PERCENTILE * abs(weight)
+                factors[factor] = {
+                    "value": None,
+                    "percentile": None,
+                    "imputed": NEUTRAL_PERCENTILE,
+                    "weight": weight,
+                }
                 continue
             pct = _percentile(pool, value)
             # отрицательный вес: высокий перцентиль (много разлоков/продаж) — плохо
-            contribution = (pct if weight >= 0 else (100 - pct)) * abs(weight)
-            total += contribution
-            weight_sum += abs(weight)
+            total += (pct if weight >= 0 else (100 - pct)) * abs(weight)
+            known_weight += abs(weight)
             factors[factor] = {"value": value, "percentile": round(pct, 1), "weight": weight}
         score = round(total / weight_sum, 1) if weight_sum else None
+        available = sum(1 for f in factors.values() if f.get("percentile") is not None)
         results.append(
             {
                 "project": p.id,
                 "name": p.name,
                 "symbol": p.symbol,
                 "score": score,
+                "coverage": round(known_weight / weight_sum, 3) if weight_sum else 0.0,
+                "factors_available": available,
+                "factors_total": len(factors),
                 "factors": factors,
             }
         )

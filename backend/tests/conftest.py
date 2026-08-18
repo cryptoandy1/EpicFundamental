@@ -44,9 +44,10 @@ def project(session):
 class FakeHttp:
     """Подменяет Http: отдаёт заранее записанные ответы по подстроке URL."""
 
-    def __init__(self, responses: dict[str, Any]):
+    def __init__(self, responses: dict[str, Any], headers: dict | None = None):
         self.responses = responses
         self.calls: list[str] = []
+        self.headers = headers or {"X-Nansen-Credits-Remaining": "1999", "X-Nansen-Credits-Used": "1"}
 
     def _find(self, url: str, params: Any = None) -> Any:
         haystack = url + " " + str(params or "")
@@ -62,6 +63,13 @@ class FakeHttp:
     def post_json(self, url: str, payload: Any, **kwargs) -> Any:
         return self._find(url, payload)
 
+    def post(self, url: str, payload: Any, **kwargs):
+        """Nansen-коллектору нужен Response: заголовки с остатком кредитов."""
+        payload_or_error = self._find(url, payload)
+        if isinstance(payload_or_error, FakeResponse):
+            return payload_or_error
+        return FakeResponse(payload_or_error, headers=self.headers)
+
     def get(self, url: str, **kwargs):
         """Сырой get (нужен GitHub-коллектору ради кода 202): 200 + .json() из фикстуры."""
         payload = self._find(url, kwargs.get("params"))
@@ -69,10 +77,11 @@ class FakeHttp:
 
 
 class FakeResponse:
-    status_code = 200
-
-    def __init__(self, payload: Any):
+    def __init__(self, payload: Any, status_code: int = 200, headers: dict | None = None):
         self._payload = payload
+        self.status_code = status_code
+        self.headers = headers or {}
+        self.text = str(payload)
 
     def json(self) -> Any:
         return self._payload

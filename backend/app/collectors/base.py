@@ -31,6 +31,7 @@ HOST_INTERVALS = {
     "api.binance.com": 0.15,
     "api.github.com": 0.8,
     "api.github.com/search": 2.1,
+    "api.nansen.ai": 0.1,  # Pro: 75 req/s — троттлинг символический
     "api.llama.fi": 0.5,
     "api.etherscan.io": 0.25,
     "api.gdeltproject.org": 6.0,  # GDELT жёстко режет частые запросы
@@ -115,24 +116,39 @@ class Http:
         resp.raise_for_status()
         return resp.json()
 
-    def post_json(self, url: str, payload: Any, retries: int = 4, **kwargs) -> Any:
-        """POST для JSON-RPC (ноды Solana/NEAR/Avalanche)."""
+    def post(self, url: str, payload: Any, retries: int = 4, **kwargs) -> httpx.Response:
+        """POST с тем же retry/backoff, что у get(); возвращает Response — нужен доступ
+        к заголовкам (Nansen: X-Nansen-Credits-Remaining). 4xx (кроме 429/лимитов) не ретраим."""
         backoff = 2.0
         for attempt in range(retries):
             self._throttle(url)
             try:
                 resp = self.client.post(url, json=payload, **kwargs)
-                if resp.status_code in (429, 500, 502, 503, 504):
-                    raise httpx.HTTPStatusError("retryable", request=resp.request, response=resp)
-                resp.raise_for_status()
-                return resp.json()
             except httpx.HTTPError as e:
                 if attempt == retries - 1:
                     raise
                 log.warning("POST %s (%s), retry in %.0fs", url, e, backoff)
                 time.sleep(backoff)
                 backoff *= 2
+                continue
+            limit_wait = self._rate_limit_wait(resp)
+            if limit_wait is not None or resp.status_code in (429, 500, 502, 503, 504):
+                if attempt == retries - 1:
+                    resp.raise_for_status()
+                retry_after = resp.headers.get("Retry-After")
+                wait = limit_wait or (float(retry_after) if retry_after else backoff)
+                log.warning("POST %s -> %s, retry in %.0fs", url, resp.status_code, wait)
+                time.sleep(wait)
+                backoff *= 2
+                continue
+            return resp
         raise RuntimeError("unreachable")
+
+    def post_json(self, url: str, payload: Any, retries: int = 4, **kwargs) -> Any:
+        """POST для JSON-RPC (ноды Solana/NEAR/Avalanche) и JSON-API."""
+        resp = self.post(url, payload, retries=retries, **kwargs)
+        resp.raise_for_status()
+        return resp.json()
 
 
 def upsert_metrics(session: Session, rows: Iterable[dict]) -> int:

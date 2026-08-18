@@ -61,6 +61,30 @@ def _peers(session: Session, project_id: str, metric: str, points: int = 104) ->
     return peers
 
 
+def _latest_by_prefix(session: Session, project_id: str, prefix: str) -> dict[str, dict]:
+    """{имя метрики без префикса: {value, ts}} — последнее значение каждой метрики группы."""
+    rows = (
+        session.query(Metric.metric, Metric.ts, Metric.value)
+        .filter(Metric.project_id == project_id, Metric.metric.like(f"{prefix}%"))
+        .order_by(Metric.metric, Metric.ts)
+        .all()
+    )
+    out: dict[str, dict] = {}
+    for metric, ts, value in rows:  # порядок по ts — последнее перезапишет предыдущее
+        out[metric[len(prefix) :]] = {"value": value, "ts": ts.isoformat()}
+    return out
+
+
+def _latest_value(session: Session, project_id: str, metric: str) -> float | None:
+    row = (
+        session.query(Metric.value)
+        .filter(Metric.project_id == project_id, Metric.metric == metric)
+        .order_by(Metric.ts.desc())
+        .first()
+    )
+    return row[0] if row else None
+
+
 def _events(session: Session, project_id: str, type_: str) -> list[dict]:
     rows = (
         session.query(Event)
@@ -103,6 +127,8 @@ def market_overview():
             "sell_signal": pct is not None and pct >= 90,
             "coinbase_rank_overall": _series(session, MARKET, "coinbase_rank_overall"),
             "coinbase_rank_finance": _series(session, MARKET, "coinbase_rank_finance"),
+            # остаток кредитов Nansen (грант разовый — видно, когда пора докупать)
+            "nansen_credits_remaining": _latest_value(session, MARKET, "nansen_credits_remaining"),
         }
     finally:
         session.close()
@@ -241,6 +267,16 @@ def project_detail(project_id: str, exclude_pr: bool = True):
                 for f, w in top_outflows
             ],
             "smart_money_fresh_share": _series(session, project_id, "smart_money_fresh_share"),
+            # Nansen (ф.11): перпы Hyperliquid — по всем монетам; потоки сегментов — где сеть покрыта;
+            # спотовая когорта Smart Money — только solana/avalanche/sei
+            "nansen": {
+                "perp": _latest_by_prefix(session, project_id, "nansen_perp_"),
+                "perp_skew_series": _series(session, project_id, "nansen_perp_sm_skew"),
+                "flows7d": _latest_by_prefix(session, project_id, "nansen_fi7d_"),
+                "exchange_flow_series": _series(session, project_id, "nansen_fi7d_exchange_netflow_usd"),
+                "fresh_flow_series": _series(session, project_id, "nansen_fi7d_fresh_wallets_netflow_usd"),
+                "sm_spot": _latest_by_prefix(session, project_id, "nansen_sm_"),
+            },
             "discord_messages_week": _series(session, project_id, "discord_messages_week"),
             "discord_substantive_week": _series(session, project_id, "discord_substantive_week"),
             "ceo_tweets_week": _series(session, project_id, "ceo_tweets_week"),

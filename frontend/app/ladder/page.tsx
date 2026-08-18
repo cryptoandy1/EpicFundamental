@@ -11,7 +11,9 @@ const FACTOR_LABELS: Record<string, string> = {
   node_growth: "Рост нод (ф.8)",
   unlock_pressure: "Навес разлоков (ф.7)",
   team_selling: "Продажи команды (ф.7)",
-  smart_money: "Smart money (ф.11)",
+  fresh_wallets_flow: "Свежие кошельки 7д / капа (Nansen, ф.11)",
+  exchange_flow: "Приток на биржи 7д / капа (Nansen; выше = навес)",
+  sm_perp_skew: "Smart money перпы: лонг−шорт (Nansen)",
   discord_activity: "Discord (ф.12)",
   tvl_momentum: "TVL momentum",
   fees_momentum: "Комиссии momentum",
@@ -44,6 +46,9 @@ export default function LadderPage() {
               <th>#</th>
               <th>Монета</th>
               <th>Скор</th>
+              <th className="num" title="доля веса скора, стоящая на реальных данных">
+                Покрытие
+              </th>
               {factorKeys.map((f) => (
                 <th key={f} className="num" title={f}>
                   {FACTOR_LABELS[f] ?? f}
@@ -73,13 +78,20 @@ export default function LadderPage() {
                     "нет данных"
                   )}
                 </td>
+                <td className="num" style={{ color: r.coverage < 1 ? "var(--muted)" : undefined }}>
+                  {(r.coverage * 100).toFixed(0)}%
+                  <span style={{ fontSize: 11 }}> ({r.factors_available}/{r.factors_total})</span>
+                </td>
                 {factorKeys.map((f) => {
                   const cell = r.factors[f];
+                  const known = cell?.percentile !== null && cell?.percentile !== undefined;
                   return (
-                    <td key={f} className="num" style={{ color: cell?.percentile === null ? "var(--muted)" : undefined }}>
-                      {cell?.percentile !== null && cell?.percentile !== undefined
-                        ? cell.percentile.toFixed(0)
-                        : "—"}
+                    <td key={f} className="num" style={{ color: known ? undefined : "var(--muted)" }}>
+                      {known ? (
+                        cell.percentile!.toFixed(0)
+                      ) : (
+                        <span title="нет данных — нейтральный перцентиль 50">50*</span>
+                      )}
                     </td>
                   );
                 })}
@@ -90,8 +102,9 @@ export default function LadderPage() {
         {rows.length === 0 && <div className="empty">Пул пуст</div>}
       </div>
       <p style={{ color: "var(--muted)", fontSize: 12 }}>
-        В ячейках — перцентиль фактора по пулу (для штрафных факторов выше = хуже). «—» — данных
-        пока нет: запустите соответствующие коллекторы.
+        В ячейках — перцентиль фактора по пулу (для штрафных факторов выше = хуже). «50*» — данных
+        нет, фактор считается нейтральным (не помогает и не вредит), чтобы монеты с разным покрытием
+        сравнивались честно. «Покрытие» — доля веса скора на реальных данных.
       </p>
     </>
   );
