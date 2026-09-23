@@ -112,22 +112,26 @@ def _percentile_of_latest(series: list[list]) -> float | None:
     return round(sum(1 for v in values if v < latest) / len(values) * 100, 1)
 
 
-# Метрики, по которым судим о свежести данных (бейдж «Данные на …» в шапке).
-KEY_METRICS = [
-    "price_usd",
-    "market_cap",
-    "btc_price_usd",
-    "chain_tvl_usd",
-    "node_count",
-    "coinbase_rank_overall",
-    "btc_dominance_pct",
-    "alts_beating_btc_30d_pct",
-    "nansen_perp_sm_skew",
-    "github_active_devs_week",
-    "github_eco_new_repos_week",
-    "trends_weekly",
-    "media_mentions",
-]
+# Метрики, по которым судим о здоровье сбора: {метрика: допустимый возраст в днях}.
+# Возраст разный по природе источника: цены и потоки — ежедневные, GitHub/Trends —
+# недельные. Метрика старше своего порога (или отсутствующая вовсе) попадает в
+# meta.stale, и бейдж в шапке краснеет с перечнем — иначе молчаливая деградация
+# одного источника не видна, как 23.09.2026 с истёкшим GITHUB_TOKEN.
+KEY_METRICS = {
+    "price_usd": 2,
+    "market_cap": 2,
+    "btc_price_usd": 2,
+    "chain_tvl_usd": 2,
+    "node_count": 2,
+    "coinbase_rank_overall": 3,
+    "btc_dominance_pct": 2,
+    "alts_beating_btc_30d_pct": 2,
+    "nansen_perp_sm_skew": 3,
+    "github_active_devs_week": 12,
+    "github_eco_new_repos_week": 12,
+    "trends_weekly": 12,
+    "media_mentions": 12,
+}
 
 ALTS_GATE_THRESHOLD = 50.0  # доля топ-100, обгоняющих BTC за 30д, при которой ворота открыты
 DOMINANCE_LOOKBACK_DAYS = 28  # с какой давностью сравниваем доминацию, чтобы назвать её падающей
@@ -168,20 +172,35 @@ def _entry_gate(session: Session) -> dict:
 
 @app.get("/api/meta")
 def meta():
-    """Когда собраны данные и насколько свежа каждая ключевая метрика."""
+    """Когда собраны данные, насколько свежа каждая ключевая метрика и что протухло."""
     session = SessionLocal()
     try:
         rows = (
             session.query(Metric.metric, func.max(Metric.ts))
-            .filter(Metric.metric.in_(KEY_METRICS))
+            .filter(Metric.metric.in_(list(KEY_METRICS)))
             .group_by(Metric.metric)
             .all()
         )
-        latest = {metric: ts.isoformat() for metric, ts in rows if ts is not None}
+        latest = {metric: ts for metric, ts in rows if ts is not None}
+        now = datetime.utcnow()
+        stale = []
+        for metric, max_age in KEY_METRICS.items():
+            ts = latest.get(metric)
+            age = (now - ts).days if ts else None
+            if age is None or age > max_age:
+                stale.append(
+                    {
+                        "metric": metric,
+                        "ts": ts.isoformat() if ts else None,
+                        "age_days": age,
+                        "max_age_days": max_age,
+                    }
+                )
         return {
             "generated_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
-            "latest": latest,
-            "oldest_key_metric": min(latest.values()) if latest else None,
+            "latest": {m: ts.isoformat() for m, ts in latest.items()},
+            "stale": stale,
+            "oldest_key_metric": min((ts.isoformat() for ts in latest.values()), default=None),
         }
     finally:
         session.close()

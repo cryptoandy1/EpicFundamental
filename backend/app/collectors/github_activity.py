@@ -23,7 +23,6 @@
 from __future__ import annotations
 
 import logging
-import os
 import time
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
@@ -31,20 +30,13 @@ from datetime import datetime, timedelta, timezone
 from ..models import Project
 from . import register
 from .base import Collector, upsert_metrics
+from .github_auth import github_headers
 
 log = logging.getLogger("collectors.github")
 
 API = "https://api.github.com"
 FALLBACK_WEEKS = 104  # глубина листинга коммитов, если stats недоступна
 FALLBACK_MAX_PAGES = 200  # x100 коммитов
-
-
-def _headers() -> dict:
-    token = os.environ.get("GITHUB_TOKEN", "")
-    h = {"Accept": "application/vnd.github+json"}
-    if token:
-        h["Authorization"] = f"Bearer {token}"
-    return h
 
 
 def _is_bot(author: dict | None, login: str) -> bool:
@@ -91,7 +83,7 @@ class GithubCollector(Collector):
         """GET со встроенным ожиданием 202 (статистика считается на стороне GitHub)."""
         url = f"{API}/repos/{repo}/stats/contributors"
         for _attempt in range(6):
-            resp = self.http.get(url, headers=_headers())
+            resp = self.http.get(url, headers=github_headers(self.http))
             if resp.status_code == 202:
                 time.sleep(5)
                 continue
@@ -127,7 +119,7 @@ class GithubCollector(Collector):
             commits = self.http.get_json(
                 f"{API}/repos/{repo}/commits",
                 params={"since": since, "per_page": 100, "page": page},
-                headers=_headers(),
+                headers=github_headers(self.http),
             )
             if not commits:
                 break
@@ -181,7 +173,7 @@ class GithubCollector(Collector):
                 notes.append(f"{repo}: ошибка {e}")
 
             try:
-                info = self.http.get_json(f"{API}/repos/{repo}", headers=_headers())
+                info = self.http.get_json(f"{API}/repos/{repo}", headers=github_headers(self.http))
                 snapshot["stars"] += info.get("stargazers_count", 0)
                 snapshot["forks"] += info.get("forks_count", 0)
                 snapshot["open_issues"] += info.get("open_issues_count", 0)
@@ -191,7 +183,7 @@ class GithubCollector(Collector):
                     rels = self.http.get_json(
                         f"{API}/repos/{repo}/releases",
                         params={"per_page": 100, "page": page},
-                        headers=_headers(),
+                        headers=github_headers(self.http),
                     )
                     if not rels:
                         break

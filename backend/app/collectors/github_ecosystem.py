@@ -20,13 +20,13 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 from datetime import datetime, timedelta, timezone
 
 from ..config import load_config
 from ..models import Project
 from . import register
 from .base import Collector, upsert_metrics
+from .github_auth import github_headers
 from .github_activity import API, week_start
 
 log = logging.getLogger("collectors.github_eco")
@@ -34,14 +34,6 @@ log = logging.getLogger("collectors.github_eco")
 BACKFILL_WEEKS = 104
 UPDATE_WEEKS = 8
 METRIC = "github_eco_new_repos_week"
-
-
-def _headers() -> dict:
-    token = os.environ.get("GITHUB_TOKEN", "")
-    h = {"Accept": "application/vnd.github+json"}
-    if token:
-        h["Authorization"] = f"Bearer {token}"
-    return h
 
 
 def topic_of(project: Project) -> str:
@@ -63,7 +55,7 @@ class GithubEcosystemCollector(Collector):
         data = self.http.get_json(
             f"{API}/search/repositories",
             params={"q": f"topic:{topic} created:{start}..{end}", "per_page": 1},
-            headers=_headers(),
+            headers=github_headers(self.http),
         )
         return int(data.get("total_count") or 0)
 

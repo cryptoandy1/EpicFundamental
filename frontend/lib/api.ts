@@ -2,9 +2,18 @@
 export type Point = [string, number];
 
 /** Свежесть данных: когда снят экспорт и последняя точка каждой ключевой метрики. */
+export interface StaleMetric {
+  metric: string;
+  ts: string | null;
+  age_days: number | null;
+  max_age_days: number;
+}
+
 export interface Meta {
   generated_at: string;
   latest: Record<string, string>;
+  /** метрики старше своего допустимого возраста или отсутствующие вовсе */
+  stale: StaleMetric[];
   oldest_key_metric: string | null;
 }
 

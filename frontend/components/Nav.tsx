@@ -20,14 +20,30 @@ export default function Nav() {
     api<Meta>("/api/meta").then(setMeta).catch(() => null);
   }, []);
 
-  // Сбой автообновления once уже стоил 35 дней молчания — показываем возраст данных всегда.
+  // Сбой сбора уже стоил 35 дней молчания, поэтому возраст данных виден всегда,
+  // а протухшие источники названы поимённо: молчаливая деградация одного коллектора
+  // (истёкший токен, кулдаун API) иначе не видна — экспорт-то свежий.
   const age = meta ? Date.now() - Date.parse(meta.generated_at) : null;
-  const stale = age !== null && age > STALE_AFTER_MS;
+  const stale = meta?.stale ?? [];
+  const alarm = (age !== null && age > STALE_AFTER_MS) || stale.length > 0;
+
   const title = meta
-    ? "Последние точки:\n" +
-      Object.entries(meta.latest)
-        .map(([metric, ts]) => `${metric}: ${ts.slice(0, 10)}`)
-        .join("\n")
+    ? [
+        stale.length
+          ? "Протухло:\n" +
+            stale
+              .map((s) =>
+                s.ts
+                  ? `${s.metric}: ${s.ts.slice(0, 10)} (${s.age_days} дн., норма ${s.max_age_days})`
+                  : `${s.metric}: данных нет`
+              )
+              .join("\n")
+          : "Все источники свежие",
+        "\nПоследние точки:\n" +
+          Object.entries(meta.latest)
+            .map(([metric, ts]) => `${metric}: ${ts.slice(0, 10)}`)
+            .join("\n"),
+      ].join("\n")
     : undefined;
 
   return (
@@ -43,15 +59,21 @@ export default function Nav() {
         </Link>
       ))}
       {meta && (
-        <span className="freshness" style={{ color: stale ? "var(--critical)" : "var(--muted)" }} title={title}>
-          {stale ? "⚠ " : ""}
-          Данные на {new Date(meta.generated_at).toLocaleString("ru-RU", {
+        <span
+          className="freshness"
+          style={{ color: alarm ? "var(--critical)" : "var(--muted)" }}
+          title={title}
+        >
+          {alarm ? "⚠ " : ""}
+          Данные на{" "}
+          {new Date(meta.generated_at).toLocaleString("ru-RU", {
             day: "2-digit",
             month: "2-digit",
             year: "numeric",
             hour: "2-digit",
             minute: "2-digit",
           })}
+          {stale.length > 0 && ` · протухло: ${stale.length}`}
         </span>
       )}
     </nav>
