@@ -21,6 +21,43 @@ log = logging.getLogger("collectors.mentions")
 
 GDELT_DOC = "https://api.gdeltproject.org/api/v2/doc/doc"
 GDELT_START_YEAR = 2017  # глубже GDELT DOC не ищет
+GDELT_RETRIES = 2  # вместо дефолтных 5: их 429 не проходит от повторов, только жжёт время
+GDELT_GIVE_UP_AFTER = 4  # подряд неудачных запросов -> считаем GDELT недоступным на весь прогон
+
+# Предохранитель: GDELT держит IP в кулдауне сутками, и полный перебор 10 лет × 9 монет
+# × 5 попыток с backoff занимал >90 минут, не давая ни одной точки (23.09.2026 недельный
+# прогон пришлось убивать руками; по расписанию он упёрся бы в лимит задачи в 3 часа).
+# Сорвались подряд GDELT_GIVE_UP_AFTER запросов — пропускаем GDELT до конца процесса.
+_gdelt_failures = 0
+_gdelt_down = False
+
+
+def gdelt_reset() -> None:
+    """Сбросить предохранитель (тесты, повторный прогон в одном процессе)."""
+    global _gdelt_failures, _gdelt_down
+    _gdelt_failures, _gdelt_down = 0, False
+
+
+def gdelt_is_down() -> bool:
+    return _gdelt_down
+
+
+def _gdelt_ok() -> None:
+    global _gdelt_failures
+    _gdelt_failures = 0
+
+
+def _gdelt_failed() -> None:
+    global _gdelt_failures, _gdelt_down
+    _gdelt_failures += 1
+    if _gdelt_failures >= GDELT_GIVE_UP_AFTER and not _gdelt_down:
+        _gdelt_down = True
+        log.error(
+            "GDELT не отвечает %d запросов подряд — пропускаю его до конца прогона. "
+            "Обычно это суточный кулдаун по IP: повторите `update --collector mentions` "
+            "в другой день, интервал 6с в base.py не уменьшайте.",
+            _gdelt_failures,
+        )
 
 PR_WIRE_DOMAINS = [
     "prnewswire.com", "globenewswire.com", "businesswire.com", "accesswire.com",
@@ -45,11 +82,15 @@ class MentionsCollector(Collector):
         assert project is not None
         keyword = project.trends_keyword or project.name
         year_now = datetime.now(timezone.utc).year
+        if _gdelt_down:
+            return "mentions: GDELT недоступен (кулдаун по IP), пропуск"
+
         rows = []
         for year in range(GDELT_START_YEAR, year_now + 1):
             try:
                 data = self.http.get_json(
                     GDELT_DOC,
+                    retries=GDELT_RETRIES,
                     params={
                         "query": _query(keyword),
                         "mode": "timelinevolraw",
@@ -58,8 +99,12 @@ class MentionsCollector(Collector):
                         "enddatetime": f"{year}1231235959",
                     },
                 )
+                _gdelt_ok()
             except Exception as e:  # noqa: BLE001
                 log.warning("GDELT %s %s: %s", keyword, year, e)
+                _gdelt_failed()
+                if _gdelt_down:
+                    return "mentions: GDELT недоступен (кулдаун по IP), пропуск"
                 continue
             for series in data.get("timeline", []):
                 for point in series.get("data", []):
@@ -80,9 +125,12 @@ class MentionsCollector(Collector):
 
     def _recent_articles(self, project: Project, keyword: str) -> int:
         """Свежие статьи (лента дашборда) — с пометкой PR-площадок."""
+        if _gdelt_down:
+            return 0
         try:
             data = self.http.get_json(
                 GDELT_DOC,
+                retries=GDELT_RETRIES,
                 params={
                     "query": _query(keyword).replace(
                         " ".join(f"-domain:{d}" for d in PR_WIRE_DOMAINS), ""
@@ -95,7 +143,9 @@ class MentionsCollector(Collector):
             )
         except Exception as e:  # noqa: BLE001
             log.warning("GDELT artlist %s: %s", keyword, e)
+            _gdelt_failed()
             return 0
+        _gdelt_ok()
         rows = []
         for art in data.get("articles", []):
             url = art.get("url", "")
