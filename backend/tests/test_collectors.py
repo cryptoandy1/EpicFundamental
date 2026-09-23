@@ -613,3 +613,49 @@ def test_nansen_full_run_not_blocked_by_daily_light(session, nansen_project, fak
     NansenCollector(session, http).update()
     assert [c for c in http.calls if "position-intelligence" in c]
     assert [c for c in http.calls if "smart-money/holdings" in c]
+
+
+def test_market_price_from_coingecko_when_no_binance_pair(session, project, fake_http):
+    """Монета без пары на глобальном Binance (напр. HYPE): цену берём из market_chart.
+
+    Без этого заготовка hyperliquid в projects.yaml дала бы пустой ряд price_usd,
+    а с ним — пустую лесенку по всей монете.
+    """
+    project.binance_symbol = ""
+    session.commit()
+    base_ms = int(datetime(2026, 9, 1, tzinfo=timezone.utc).timestamp() * 1000)
+    http = fake_http(
+        {
+            "market_chart": {
+                "prices": [[base_ms + i * 86_400_000, 90.0 + i] for i in range(3)],
+                "market_caps": [[base_ms, 21_000_000_000.0]],
+                "total_volumes": [[base_ms, 1_200_000_000.0]],
+            },
+            "coins/testcoin": {"genesis_date": None, "categories": ["layer-1"]},
+        }
+    )
+    report = MarketCollector(session, http).backfill(project)
+
+    prices = session.query(Metric).filter_by(metric="price_usd").order_by(Metric.ts).all()
+    assert [p.value for p in prices] == [90.0, 91.0, 92.0]
+    assert "price/cap/volume" in report
+    assert not any("binance" in c.lower() for c in http.calls), "Binance не должен опрашиваться"
+
+
+def test_market_keeps_binance_price_when_pair_exists(session, project, fake_http):
+    """С парой на Binance цена берётся оттуда (вся история), а не из 365 дней CoinGecko."""
+    base_ms = int(datetime(2026, 9, 1, tzinfo=timezone.utc).timestamp() * 1000)
+    http = fake_http(
+        {
+            "binance.com": [_binance_kline(base_ms, 100.0)],
+            "market_chart": {
+                "prices": [[base_ms, 999.0]],          # не должно попасть в БД
+                "market_caps": [[base_ms, 1_000_000.0]],
+                "total_volumes": [[base_ms, 50_000.0]],
+            },
+            "coins/testcoin": {"genesis_date": None, "categories": []},
+        }
+    )
+    MarketCollector(session, http).backfill(project)
+    prices = [p.value for p in session.query(Metric).filter_by(metric="price_usd").all()]
+    assert prices == [100.0], "цена Binance не должна перетираться значением CoinGecko"
