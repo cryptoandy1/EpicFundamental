@@ -130,30 +130,37 @@ KEY_METRICS = [
 ]
 
 ALTS_GATE_THRESHOLD = 50.0  # доля топ-100, обгоняющих BTC за 30д, при которой ворота открыты
+DOMINANCE_LOOKBACK_DAYS = 28  # с какой давностью сравниваем доминацию, чтобы назвать её падающей
 
 
 def _entry_gate(session: Session) -> dict:
     """Ворота входа в лесенку: пока идёт «сезон биткоина», ротация в альты преждевременна.
-    Открыты, когда ≥50% топ-100 обгоняют BTC за 30 дней И доминация BTC ниже, чем 4 недели назад."""
+    Открыты, когда доля топ-100, обгоняющих BTC за 30 дней, выше порога И доминация BTC
+    ниже, чем lookback дней назад. Пороги настраиваются в projects.yaml -> entry_gate."""
+    cfg = load_config().get("entry_gate") or {}
+    threshold = float(cfg.get("alts_threshold_pct", ALTS_GATE_THRESHOLD))
+    lookback = int(cfg.get("dominance_lookback_days", DOMINANCE_LOOKBACK_DAYS))
+
     dominance_series = _series(session, MARKET, "btc_dominance_pct")
     alts_series = _series(session, MARKET, "alts_beating_btc_30d_pct")
     dominance = dominance_series[-1][1] if dominance_series else None
     alts = alts_series[-1][1] if alts_series else None
 
-    dominance_4w_ago = None
+    dominance_before = None
     if dominance_series:
-        cutoff = datetime.fromisoformat(dominance_series[-1][0]) - timedelta(days=28)
+        cutoff = datetime.fromisoformat(dominance_series[-1][0]) - timedelta(days=lookback)
         older = [v for ts, v in dominance_series if datetime.fromisoformat(ts) <= cutoff]
-        dominance_4w_ago = older[-1] if older else None
+        dominance_before = older[-1] if older else None
 
-    falling = dominance is not None and dominance_4w_ago is not None and dominance < dominance_4w_ago
+    falling = dominance is not None and dominance_before is not None and dominance < dominance_before
     return {
         "btc_dominance_pct": dominance,
-        "btc_dominance_4w_ago": dominance_4w_ago,
+        "btc_dominance_4w_ago": dominance_before,
+        "dominance_lookback_days": lookback,
         "dominance_falling": falling,
         "alts_beating_btc_30d_pct": alts,
-        "alts_threshold": ALTS_GATE_THRESHOLD,
-        "open": bool(alts is not None and alts >= ALTS_GATE_THRESHOLD and falling),
+        "alts_threshold": threshold,
+        "open": bool(alts is not None and alts >= threshold and falling),
         "dominance_series": dominance_series,
         "alts_series": alts_series,
     }

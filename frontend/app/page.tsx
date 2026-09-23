@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import Chart from "@/components/Chart";
-import { api, MarketOverview } from "@/lib/api";
+import { api, EntryGate, MarketOverview } from "@/lib/api";
 import { TOKENS, baseOption, lineSeries, useMode } from "@/lib/theme";
 
 export default function MarketPage() {
@@ -82,7 +82,18 @@ export default function MarketPage() {
   if (!data) return <div className="empty">Загрузка…</div>;
 
   const pct = data.trends_percentile;
-  const gate = data.entry_gate;
+  // подстраховка на случай снапшота, снятого до появления ворот (кэш браузера)
+  const gate: EntryGate = data.entry_gate ?? {
+    btc_dominance_pct: null,
+    btc_dominance_4w_ago: null,
+    dominance_lookback_days: 28,
+    dominance_falling: false,
+    alts_beating_btc_30d_pct: null,
+    alts_threshold: 50,
+    open: false,
+    dominance_series: [],
+    alts_series: [],
+  };
 
   return (
     <>

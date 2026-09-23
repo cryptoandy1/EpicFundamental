@@ -12,6 +12,7 @@ export interface Meta {
 export interface EntryGate {
   btc_dominance_pct: number | null;
   btc_dominance_4w_ago: number | null;
+  dominance_lookback_days: number;
   dominance_falling: boolean;
   alts_beating_btc_30d_pct: number | null;
   alts_threshold: number;
