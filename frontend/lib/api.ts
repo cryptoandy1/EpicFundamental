@@ -1,6 +1,25 @@
 // Типы ответов FastAPI + fetch-помощник.
 export type Point = [string, number];
 
+/** Свежесть данных: когда снят экспорт и последняя точка каждой ключевой метрики. */
+export interface Meta {
+  generated_at: string;
+  latest: Record<string, string>;
+  oldest_key_metric: string | null;
+}
+
+/** Ворота входа в лесенку: пока идёт «сезон биткоина», ротация в альты преждевременна. */
+export interface EntryGate {
+  btc_dominance_pct: number | null;
+  btc_dominance_4w_ago: number | null;
+  dominance_falling: boolean;
+  alts_beating_btc_30d_pct: number | null;
+  alts_threshold: number;
+  open: boolean;
+  dominance_series: Point[];
+  alts_series: Point[];
+}
+
 export interface MarketOverview {
   btc_price: Point[];
   btc_trends_monthly: Point[];
@@ -9,6 +28,7 @@ export interface MarketOverview {
   sell_signal: boolean;
   coinbase_rank_overall: Point[];
   coinbase_rank_finance: Point[];
+  entry_gate: EntryGate;
   nansen_credits_remaining: number | null;
 }
 

@@ -1,5 +1,6 @@
 """REST API для дашбордов Next.js.
 
+  GET /api/meta              — когда собраны данные + свежесть ключевых метрик (бейдж в шапке)
   GET /api/market/overview   — «Обзор рынка»: BTC trends + перцентиль-алерт, ранг Coinbase, цена BTC
   GET /api/projects          — пул: сводка по каждому проекту
   GET /api/projects/{id}     — страница проекта: все графики одним бандлом
@@ -10,7 +11,7 @@ from __future__ import annotations
 
 import json
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -111,6 +112,74 @@ def _percentile_of_latest(series: list[list]) -> float | None:
     return round(sum(1 for v in values if v < latest) / len(values) * 100, 1)
 
 
+# Метрики, по которым судим о свежести данных (бейдж «Данные на …» в шапке).
+KEY_METRICS = [
+    "price_usd",
+    "market_cap",
+    "btc_price_usd",
+    "chain_tvl_usd",
+    "node_count",
+    "coinbase_rank_overall",
+    "btc_dominance_pct",
+    "alts_beating_btc_30d_pct",
+    "nansen_perp_sm_skew",
+    "github_active_devs_week",
+    "github_eco_new_repos_week",
+    "trends_weekly",
+    "media_mentions",
+]
+
+ALTS_GATE_THRESHOLD = 50.0  # доля топ-100, обгоняющих BTC за 30д, при которой ворота открыты
+
+
+def _entry_gate(session: Session) -> dict:
+    """Ворота входа в лесенку: пока идёт «сезон биткоина», ротация в альты преждевременна.
+    Открыты, когда ≥50% топ-100 обгоняют BTC за 30 дней И доминация BTC ниже, чем 4 недели назад."""
+    dominance_series = _series(session, MARKET, "btc_dominance_pct")
+    alts_series = _series(session, MARKET, "alts_beating_btc_30d_pct")
+    dominance = dominance_series[-1][1] if dominance_series else None
+    alts = alts_series[-1][1] if alts_series else None
+
+    dominance_4w_ago = None
+    if dominance_series:
+        cutoff = datetime.fromisoformat(dominance_series[-1][0]) - timedelta(days=28)
+        older = [v for ts, v in dominance_series if datetime.fromisoformat(ts) <= cutoff]
+        dominance_4w_ago = older[-1] if older else None
+
+    falling = dominance is not None and dominance_4w_ago is not None and dominance < dominance_4w_ago
+    return {
+        "btc_dominance_pct": dominance,
+        "btc_dominance_4w_ago": dominance_4w_ago,
+        "dominance_falling": falling,
+        "alts_beating_btc_30d_pct": alts,
+        "alts_threshold": ALTS_GATE_THRESHOLD,
+        "open": bool(alts is not None and alts >= ALTS_GATE_THRESHOLD and falling),
+        "dominance_series": dominance_series,
+        "alts_series": alts_series,
+    }
+
+
+@app.get("/api/meta")
+def meta():
+    """Когда собраны данные и насколько свежа каждая ключевая метрика."""
+    session = SessionLocal()
+    try:
+        rows = (
+            session.query(Metric.metric, func.max(Metric.ts))
+            .filter(Metric.metric.in_(KEY_METRICS))
+            .group_by(Metric.metric)
+            .all()
+        )
+        latest = {metric: ts.isoformat() for metric, ts in rows if ts is not None}
+        return {
+            "generated_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+            "latest": latest,
+            "oldest_key_metric": min(latest.values()) if latest else None,
+        }
+    finally:
+        session.close()
+
+
 @app.get("/api/market/overview")
 def market_overview():
     session = SessionLocal()
@@ -127,6 +196,8 @@ def market_overview():
             "sell_signal": pct is not None and pct >= 90,
             "coinbase_rank_overall": _series(session, MARKET, "coinbase_rank_overall"),
             "coinbase_rank_finance": _series(session, MARKET, "coinbase_rank_finance"),
+            # когда вообще начинать лесенку: сезон биткоина или ротация в альты
+            "entry_gate": _entry_gate(session),
             # остаток кредитов Nansen (грант разовый — видно, когда пора докупать)
             "nansen_credits_remaining": _latest_value(session, MARKET, "nansen_credits_remaining"),
         }

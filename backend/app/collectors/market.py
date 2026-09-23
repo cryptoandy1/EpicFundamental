@@ -1,7 +1,8 @@
 """Цена/капитализация/объём.
 
 - Binance klines: ПОЛНАЯ история дневной цены с листинга (бесплатно, без ключа).
-- CoinGecko market_chart: капа и объём (бесплатный тариф отдаёт максимум 365 дней).
+- CoinGecko market_chart: капа и объём (бесплатный тариф отдаёт максимум 365 дней);
+  если пары на Binance нет (binance_symbol пуст — напр. HYPE), оттуда же берётся и цена.
 - Genesis-дата и категории — из CoinGecko /coins/{id} (ф.4, возраст проекта).
 """
 from __future__ import annotations
@@ -71,8 +72,12 @@ class MarketCollector(Collector):
                     f"{COINGECKO}/coins/{project.coingecko_id}/market_chart",
                     params={"vs_currency": "usd", "days": 365},
                 )
+                keys = [("market_caps", "market_cap"), ("total_volumes", "volume_24h")]
+                if not project.binance_symbol:
+                    # нет пары на Binance (напр. HYPE) — дневная цена из того же ответа, 365 дн.
+                    keys.insert(0, ("prices", "price_usd"))
                 rows = []
-                for key, metric in (("market_caps", "market_cap"), ("total_volumes", "volume_24h")):
+                for key, metric in keys:
                     for ms, value in chart.get(key, []):
                         ts = datetime.fromtimestamp(ms / 1000, tz=timezone.utc)
                         ts = ts.replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
@@ -80,7 +85,8 @@ class MarketCollector(Collector):
                             {"project_id": project.id, "metric": metric, "ts": ts, "value": value}
                         )
                 n = upsert_metrics(self.session, rows)
-                parts.append(f"cap/volume: {n} точек")
+                label = "price/cap/volume" if not project.binance_symbol else "cap/volume"
+                parts.append(f"{label}: {n} точек")
             except Exception as e:  # noqa: BLE001 — не роняем весь бэкфилл
                 log.warning("CoinGecko market_chart %s: %s", project.coingecko_id, e)
                 parts.append(f"cap/volume: ошибка ({e})")

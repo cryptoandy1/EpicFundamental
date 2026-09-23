@@ -24,6 +24,19 @@ from .models import Project
 log = logging.getLogger("cli")
 
 
+def _utf8_streams() -> None:
+    """Под Планировщиком задач stdout/stderr — пайп с системной кодировкой (cp1252),
+    и print() кириллицы («… точек», «ОШИБКА») падал с UnicodeEncodeError — так молча
+    умирал каждый прогон с 19.08 по 22.09.2026. Переключаем потоки на UTF-8 на месте:
+    StreamHandler логгера держит тот же объект, поэтому тоже перестаёт сыпать ошибками."""
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+            except (ValueError, OSError):  # поток закрыт или подменён — не критично
+                pass
+
+
 def _run_collectors(mode: str, project_filter: str | None, collector_filter: list[str] | None) -> None:
     init_db()
     session = SessionLocal()
@@ -58,6 +71,7 @@ def _run_collectors(mode: str, project_filter: str | None, collector_filter: lis
 
 
 def main() -> None:
+    _utf8_streams()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     logging.getLogger("httpx").setLevel(logging.WARNING)
 

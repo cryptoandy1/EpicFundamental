@@ -1,7 +1,7 @@
 """Статический экспорт API в JSON-файлы для GitHub Pages.
 
 Повторяет ответы всех эндпоинтов main.py в файлы:
-  data/market/overview.json, data/projects.json, data/projects/{id}.json,
+  data/meta.json, data/market/overview.json, data/projects.json, data/projects/{id}.json,
   data/screener.json, data/ladder.json
 Фронтенд в статическом режиме (NEXT_PUBLIC_STATIC=1) читает эти файлы
 вместо живого API.
@@ -13,7 +13,7 @@ from pathlib import Path
 
 from .config import sync_projects
 from .db import SessionLocal, init_db
-from .main import ladder, list_projects, market_overview, project_detail, screener_candidates
+from .main import ladder, list_projects, market_overview, meta, project_detail, screener_candidates
 from .models import Project
 
 DEFAULT_OUT = Path(__file__).resolve().parents[2] / "frontend" / "public" / "data"
@@ -31,6 +31,7 @@ def export_static(out_dir: Path | str = DEFAULT_OUT) -> list[Path]:
         session.close()
 
     payloads: dict[str, object] = {
+        "meta.json": meta(),  # generated_at + свежесть ключевых метрик — бейдж «Данные на …»
         "market/overview.json": market_overview(),
         "projects.json": list_projects(),
         "screener.json": screener_candidates(),

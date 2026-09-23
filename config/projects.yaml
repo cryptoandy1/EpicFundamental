@@ -218,13 +218,58 @@ twitter_curation:
 # Скринер (ф.3): фильтры отбора кандидатов из CoinGecko
 screener:
   min_market_cap: 100000000        # ≥ $100M
-  max_market_cap: 20000000000      # ≤ $20B (не мегакапы)
+  max_market_cap: 50000000000      # ≤ $50B (было 20 — лидеры 2026 ZEC/HYPE выросли выше потолка)
   min_volume_24h: 10000000         # ≥ $10M/сутки
   max_fdv_mc_ratio: 3.0            # FDV/MC ≤ 3 (не сплошной навес разлоков)
   categories:                      # интересующие категории CoinGecko (пусто = все)
     - layer-1
     - data-availability
     - modular-blockchain
+  # Наблюдательный список: попадают в снапшот ВСЕГДА, даже не пройдя фильтры —
+  # в «Причине» видно, какие именно не прошли. Нужен, чтобы лидеры не исчезали из
+  # поля зрения (23.09.2026: HYPE режется по FDV/MC ≈ 4, ZEC прошёл бы капу только после
+  # подъёма потолка до $50B — 12.08 он был $8.3B и был крупнейшим кандидатом).
+  always_include:
+    - hyperliquid
+    - zcash
+
+# --- Заготовки для watch-list (в пул НЕ добавлены — решение ручное) ------------
+# Перенесите блок в projects: выше, если решите брать монету в пул.
+#
+#  - id: hyperliquid
+#    name: Hyperliquid
+#    symbol: HYPE
+#    coingecko_id: hyperliquid
+#    # binance_symbol: нет пары на глобальном Binance (только Binance.US) —
+#    # коллектор market возьмёт цену из CoinGecko market_chart (365 дней вместо всей истории)
+#    chain: hyperliquid
+#    github: []                    # ядро закрыто → фактор github_core_devs будет пуст
+#    github_topic: hyperliquid
+#    trends_keyword: hyperliquid
+#    hyperliquid_symbol: HYPE
+#    discord_invite: hyperliquid
+#    wallets: []
+#    # Пустые факторы: github_core_devs, node_growth (нет адаптера нод),
+#    # fresh_wallets_flow/exchange_flow (сеть hyperliquid в Nansen не проверена).
+#    # Есть: TVL и комиссии DefiLlama, перпы Hyperliquid (sm_perp_skew), Trends.
+#    # Риск для лесенки: разлок 9.92M HYPE ежемесячно 6-го числа core-контрибьюторам
+#    # до конца 2027 — вносите в unlock_events, иначе unlock_pressure не увидит навеса.
+#
+#  - id: zcash
+#    name: Zcash
+#    symbol: ZEC
+#    coingecko_id: zcash
+#    binance_symbol: ZECUSDT
+#    chain: zcash
+#    github:
+#      - zcash/zcash
+#      - zcash/librustzcash
+#    github_topic: zcash
+#    trends_keyword: zcash
+#    hyperliquid_symbol: ZEC
+#    wallets: []
+#    # Пустые факторы: node_growth (нет адаптера), fresh_wallets_flow/exchange_flow (нет в Nansen).
+#    # Есть: TVL/комиссии DefiLlama (TVL мал, ~$4M — моментум будет шумным), перпы, Trends, GitHub.
 
 # Веса композитного скора «лесенки» (этап 5). Сумма не обязана быть = 1.
 scoring:

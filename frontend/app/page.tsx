@@ -64,10 +64,25 @@ export default function MarketPage() {
     };
   }, [data, t]);
 
+  const gateOpt = useMemo(() => {
+    const gate = data?.entry_gate;
+    if (!gate || gate.alts_series.length + gate.dominance_series.length === 0) return null;
+    const base = baseOption(t);
+    return {
+      ...base,
+      series: [
+        lineSeries("Доля топ-100, обгоняющих BTC за 30д, %", gate.alts_series),
+        lineSeries("Доминация BTC, %", gate.dominance_series),
+      ],
+      yAxis: { ...base.yAxis, max: 100 },
+    };
+  }, [data, t]);
+
   if (error) return <div className="alert danger">API недоступен: {error}. Запустите backend: python -m app serve</div>;
   if (!data) return <div className="empty">Загрузка…</div>;
 
   const pct = data.trends_percentile;
+  const gate = data.entry_gate;
 
   return (
     <>
@@ -81,6 +96,26 @@ export default function MarketPage() {
         <div className="alert ok">
           Пика интереса нет: текущий Google-интерес к биткоину — {pct ?? "н/д"} перцентиль за 5 лет
           (сигнал слива при &ge; 90).
+        </div>
+      )}
+
+      {gate.open ? (
+        <div className="alert ok">
+          <b>Ворота входа открыты.</b> Альты обгоняют BTC ({gate.alts_beating_btc_30d_pct}% топ-100 за
+          30 дней, порог {gate.alts_threshold}%) при падающей доминации BTC — фаза ротации в альты,
+          лесенка применима.
+        </div>
+      ) : (
+        <div className="alert">
+          <b>Ворота входа закрыты — сезон биткоина.</b>{" "}
+          {gate.alts_beating_btc_30d_pct !== null
+            ? `Обгоняют BTC за 30 дней ${gate.alts_beating_btc_30d_pct}% топ-100 (нужно ≥ ${gate.alts_threshold}%)`
+            : "Нет данных о доле альтов, обгоняющих BTC"}
+          {gate.btc_dominance_pct !== null &&
+            `, доминация BTC ${gate.btc_dominance_pct.toFixed(1)}%${
+              gate.dominance_falling ? " (падает)" : " (не падает)"
+            }`}
+          . Ротация в альты преждевременна: держите ядро в BTC.
         </div>
       )}
 
@@ -113,6 +148,17 @@ export default function MarketPage() {
           </div>
           <div className="hint">в топ-10 на пиках маний (ф.2)</div>
         </div>
+        <div className="stat">
+          <div className="label">Ворота входа в лесенку</div>
+          <div className="value" style={{ color: gate.open ? t.good : t.ink }}>
+            {gate.open ? "открыты" : "закрыты"}
+          </div>
+          <div className="hint">
+            {gate.alts_beating_btc_30d_pct !== null
+              ? `${gate.alts_beating_btc_30d_pct}% альтов обгоняют BTC`
+              : "нет данных"}
+          </div>
+        </div>
       </div>
 
       <div className="grid2">
@@ -130,6 +176,18 @@ export default function MarketPage() {
           <h3>Цена BTC</h3>
           <p className="sub">вся история с Binance, лог-шкала</p>
           {priceOpt ? <Chart option={priceOpt} /> : <div className="empty">нет данных</div>}
+        </div>
+        <div className="card">
+          <h3>Ворота входа: альты vs BTC</h3>
+          <p className="sub">
+            когда начинать лесенку: доля топ-100, обгоняющих BTC за 30 дней (порог {gate.alts_threshold}%),
+            и доминация BTC; копится с 23.09.2026
+          </p>
+          {gateOpt ? (
+            <Chart option={gateOpt} />
+          ) : (
+            <div className="empty">нет данных — запустите update (altseason)</div>
+          )}
         </div>
         <div className="card">
           <h3>Ранг Coinbase в App Store</h3>

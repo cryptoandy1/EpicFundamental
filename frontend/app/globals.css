@@ -81,6 +81,11 @@ a:hover {
   color: var(--ink);
   font-weight: 600;
 }
+.nav .freshness {
+  margin-left: auto;
+  font-size: 12px;
+  white-space: nowrap;
+}
 
 .container {
   max-width: 1240px;

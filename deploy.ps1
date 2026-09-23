@@ -3,6 +3,8 @@
 # Шаги: свежие JSON-снапшоты из локальной БД -> статическая сборка Next.js ->
 # принудительный пуш содержимого frontend/out в ветку gh-pages.
 $ErrorActionPreference = "Stop"
+$env:PYTHONUTF8 = "1"   # python пишет в пайп: без этого cp1252 и UnicodeEncodeError на кириллице
+try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch { }
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repo = "https://github.com/cryptoandy1/EpicFundamental.git"
 
