@@ -105,11 +105,13 @@ def _events(session: Session, project_id: str, type_: str) -> list[dict]:
 
 
 def _percentile_of_latest(series: list[list]) -> float | None:
+    """Перцентиль последнего значения ряда. Знаменатель n-1 (как scoring._percentile):
+    максимум истории должен давать ровно 100, иначе порог 90 недостижим на коротких рядах."""
     values = [v for _, v in series if v is not None]
     if len(values) < 10:
         return None
     latest = values[-1]
-    return round(sum(1 for v in values if v < latest) / len(values) * 100, 1)
+    return round(sum(1 for v in values if v < latest) / (len(values) - 1) * 100, 1)
 
 
 # Метрики, по которым судим о здоровье сбора: {метрика: допустимый возраст в днях}.
@@ -135,6 +137,83 @@ KEY_METRICS = {
 
 ALTS_GATE_THRESHOLD = 50.0  # доля топ-100, обгоняющих BTC за 30д, при которой ворота открыты
 DOMINANCE_LOOKBACK_DAYS = 28  # с какой давностью сравниваем доминацию, чтобы назвать её падающей
+DOMINANCE_WINDOW_DAYS = 7  # окно усреднения доминации: одиночная точка слишком шумная
+DOMINANCE_MIN_POINTS = 4  # меньше точек в окне -> усреднять нечего, откат к сравнению двух точек
+
+EXIT_DEFAULTS = {
+    "trends_sell_pct": 90.0,
+    "trends_warming_pct": 75.0,
+    "coinbase_sell_rank": 10.0,
+    "coinbase_warming_rank": 50.0,
+}
+
+
+def _exit_signal(trends_pct: float | None, coinbase_rank: float | None, cfg: dict) -> dict:
+    """Сигнал выхода ВСЕГО портфеля в стейблы по признакам розничной эйфории.
+
+    Два независимых источника, срабатывает любой: интерес в Google Trends к биткоину
+    (перцентиль за 5 лет) и ранг Coinbase в общем топе App Store (201 = вне топ-200).
+    Три уровня: ok -> warming (готовить план выхода) -> sell. Пороги — в projects.yaml.
+    Раньше сигнал стоял на одном Trends с порогом, зашитым в код, и без предупреждения."""
+    sell_pct = float(cfg.get("trends_sell_pct", EXIT_DEFAULTS["trends_sell_pct"]))
+    warm_pct = float(cfg.get("trends_warming_pct", EXIT_DEFAULTS["trends_warming_pct"]))
+    sell_rank = float(cfg.get("coinbase_sell_rank", EXIT_DEFAULTS["coinbase_sell_rank"]))
+    warm_rank = float(cfg.get("coinbase_warming_rank", EXIT_DEFAULTS["coinbase_warming_rank"]))
+
+    reasons: list[str] = []
+    tier = "ok"
+    if trends_pct is not None and trends_pct >= sell_pct:
+        tier = "sell"
+        reasons.append(f"Google Trends BTC: {trends_pct} перцентиль ≥ {sell_pct:g}")
+    if coinbase_rank is not None and coinbase_rank <= sell_rank:
+        tier = "sell"
+        reasons.append(f"Coinbase #{coinbase_rank:g} в App Store ≤ {sell_rank:g}")
+    if tier == "ok":
+        if trends_pct is not None and trends_pct >= warm_pct:
+            tier = "warming"
+            reasons.append(f"Google Trends BTC: {trends_pct} перцентиль ≥ {warm_pct:g} (разогрев)")
+        if coinbase_rank is not None and coinbase_rank <= warm_rank:
+            tier = "warming"
+            reasons.append(f"Coinbase #{coinbase_rank:g} в App Store ≤ {warm_rank:g} (разогрев)")
+    return {
+        "tier": tier,
+        "trends_percentile": trends_pct,
+        "coinbase_rank_overall_latest": coinbase_rank,
+        "thresholds": {
+            "trends_sell_pct": sell_pct,
+            "trends_warming_pct": warm_pct,
+            "coinbase_sell_rank": sell_rank,
+            "coinbase_warming_rank": warm_rank,
+        },
+        "reasons": reasons,
+    }
+
+
+def _playbook(exit_tier: str, gate_state: str, history_days: int, lookback: int) -> dict:
+    """Одна строка «что делать сейчас»: выход важнее ротации, ротация важнее удержания."""
+    if exit_tier == "sell":
+        return {
+            "state": "EXIT",
+            "text": "Сигнал выхода: продавать всё в стейблы, лесенка закрыта.",
+        }
+    if gate_state == "open":
+        return {
+            "state": "ROTATE",
+            "text": "Ворота открыты: ротация из BTC в топ лесенки траншами (спот, не плечо).",
+        }
+    text = "Держать ядро в BTC; ротация в альты преждевременна."
+    if exit_tier == "warming":
+        text += " Интерес к BTC разогревается — готовьте план выхода."
+    if gate_state == "warming":
+        text += f" Альты обгоняют BTC, ждём подтверждения по доминации: истории {history_days} из {lookback} дн."
+    return {"state": "HOLD_BTC", "text": text}
+
+
+def _window_mean(series: list[list], end: datetime, days: int = DOMINANCE_WINDOW_DAYS) -> tuple[float | None, int]:
+    """Среднее значений в окне (end-days, end] и число точек в нём."""
+    start = end - timedelta(days=days)
+    values = [v for ts, v in series if start < datetime.fromisoformat(ts) <= end and v is not None]
+    return (sum(values) / len(values) if values else None, len(values))
 
 
 def _entry_gate(session: Session) -> dict:
@@ -150,21 +229,50 @@ def _entry_gate(session: Session) -> dict:
     dominance = dominance_series[-1][1] if dominance_series else None
     alts = alts_series[-1][1] if alts_series else None
 
+    # «Доминация падает»: среднее последней недели против среднего недели lookback назад.
+    # Сравнение двух одиночных точек шумно (доминация скачет на 0.5 п.п. за день), поэтому
+    # усредняем; пока точек мало — честно откатываемся к двухточечному сравнению.
+    recent_mean = base_mean = None
     dominance_before = None
     if dominance_series:
-        cutoff = datetime.fromisoformat(dominance_series[-1][0]) - timedelta(days=lookback)
-        older = [v for ts, v in dominance_series if datetime.fromisoformat(ts) <= cutoff]
-        dominance_before = older[-1] if older else None
+        latest_ts = datetime.fromisoformat(dominance_series[-1][0])
+        cutoff = latest_ts - timedelta(days=lookback)
+        recent_mean, n_recent = _window_mean(dominance_series, latest_ts)
+        base_mean, n_base = _window_mean(dominance_series, cutoff)
+        if n_recent >= DOMINANCE_MIN_POINTS and n_base >= DOMINANCE_MIN_POINTS:
+            dominance_before = base_mean
+        else:
+            older = [v for ts, v in dominance_series if datetime.fromisoformat(ts) <= cutoff]
+            dominance_before = older[-1] if older else None
+            recent_mean = base_mean = None
 
-    falling = dominance is not None and dominance_before is not None and dominance < dominance_before
+    current = recent_mean if recent_mean is not None else dominance
+    falling = current is not None and dominance_before is not None and current < dominance_before
+    confirmed = dominance_before is not None
+    alts_ok = alts is not None and alts >= threshold
+
+    # warming: альты уже обгоняют BTC, но по доминации подтверждения ещё нет (мало истории).
+    # Это не «открыто»: доля альтов легко даёт ложный сигнал на одном отскоке.
+    if alts_ok and falling:
+        gate_state = "open"
+    elif alts_ok and not confirmed:
+        gate_state = "warming"
+    else:
+        gate_state = "closed"
+
     return {
         "btc_dominance_pct": dominance,
         "btc_dominance_4w_ago": dominance_before,
         "dominance_lookback_days": lookback,
         "dominance_falling": falling,
+        "dominance_confirmed": confirmed,
+        "dominance_recent_mean": round(recent_mean, 2) if recent_mean is not None else None,
+        "dominance_base_mean": round(base_mean, 2) if base_mean is not None else None,
+        "history_days": len(dominance_series),
         "alts_beating_btc_30d_pct": alts,
         "alts_threshold": threshold,
-        "open": bool(alts is not None and alts >= threshold and falling),
+        "gate_state": gate_state,
+        "open": gate_state == "open",
         "dominance_series": dominance_series,
         "alts_series": alts_series,
     }
@@ -213,17 +321,31 @@ def market_overview():
         trends_weekly = _series(session, MARKET, "trends_weekly")
         trends_monthly = _series(session, MARKET, "trends_monthly")
         pct = _percentile_of_latest(trends_weekly)
+        coinbase_overall = _series(session, MARKET, "coinbase_rank_overall")
+        coinbase_latest = coinbase_overall[-1][1] if coinbase_overall else None
+        exit_signal = _exit_signal(pct, coinbase_latest, load_config().get("exit_signal") or {})
+        gate = _entry_gate(session)
         return {
             "btc_price": _series(session, MARKET, "btc_price_usd"),
             "btc_trends_monthly": trends_monthly,
             "btc_trends_weekly": trends_weekly,
             # перцентиль текущего интереса за 5 лет: > 90 — зона «пик = сливаем»
             "trends_percentile": pct,
-            "sell_signal": pct is not None and pct >= 90,
-            "coinbase_rank_overall": _series(session, MARKET, "coinbase_rank_overall"),
+            # составной сигнал выхода (Trends + ранг Coinbase), три уровня
+            "exit_signal": exit_signal,
+            # legacy-поле: старый фронт и снапшоты в кэше читают булев sell_signal
+            "sell_signal": exit_signal["tier"] == "sell",
+            # что делать прямо сейчас одной строкой — выход > ротация > удержание BTC
+            "playbook": _playbook(
+                exit_signal["tier"],
+                gate["gate_state"],
+                gate["history_days"],
+                gate["dominance_lookback_days"],
+            ),
+            "coinbase_rank_overall": coinbase_overall,
             "coinbase_rank_finance": _series(session, MARKET, "coinbase_rank_finance"),
             # когда вообще начинать лесенку: сезон биткоина или ротация в альты
-            "entry_gate": _entry_gate(session),
+            "entry_gate": gate,
             # остаток кредитов Nansen (грант разовый — видно, когда пора докупать)
             "nansen_credits_remaining": _latest_value(session, MARKET, "nansen_credits_remaining"),
         }

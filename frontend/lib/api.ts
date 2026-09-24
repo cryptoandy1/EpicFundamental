@@ -23,11 +23,34 @@ export interface EntryGate {
   btc_dominance_4w_ago: number | null;
   dominance_lookback_days: number;
   dominance_falling: boolean;
+  /** подтверждена ли доминация: хватило ли истории для сравнения */
+  dominance_confirmed?: boolean;
+  dominance_recent_mean?: number | null;
+  dominance_base_mean?: number | null;
+  /** сколько дневных точек доминации накоплено (нужно dominance_lookback_days) */
+  history_days?: number;
   alts_beating_btc_30d_pct: number | null;
   alts_threshold: number;
+  /** closed | warming (альты обгоняют, доминация не подтверждена) | open */
+  gate_state?: "closed" | "warming" | "open";
   open: boolean;
   dominance_series: Point[];
   alts_series: Point[];
+}
+
+/** Сигнал выхода ВСЕГО портфеля в стейблы: Trends BTC + ранг Coinbase, три уровня. */
+export interface ExitSignal {
+  tier: "ok" | "warming" | "sell";
+  trends_percentile: number | null;
+  coinbase_rank_overall_latest: number | null;
+  thresholds: Record<string, number>;
+  reasons: string[];
+}
+
+/** Что делать прямо сейчас: выход > ротация > удержание BTC. */
+export interface Playbook {
+  state: "EXIT" | "ROTATE" | "HOLD_BTC";
+  text: string;
 }
 
 export interface MarketOverview {
@@ -35,6 +58,9 @@ export interface MarketOverview {
   btc_trends_monthly: Point[];
   btc_trends_weekly: Point[];
   trends_percentile: number | null;
+  /** необязательные — снапшот в кэше браузера может быть снят до этапа 2 */
+  exit_signal?: ExitSignal;
+  playbook?: Playbook;
   sell_signal: boolean;
   coinbase_rank_overall: Point[];
   coinbase_rank_finance: Point[];

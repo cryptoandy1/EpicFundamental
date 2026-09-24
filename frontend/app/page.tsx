@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import Chart from "@/components/Chart";
-import { api, EntryGate, MarketOverview } from "@/lib/api";
+import { api, EntryGate, ExitSignal, MarketOverview, Playbook } from "@/lib/api";
 import { TOKENS, baseOption, lineSeries, useMode } from "@/lib/theme";
 
 export default function MarketPage() {
@@ -94,27 +94,70 @@ export default function MarketPage() {
     dominance_series: [],
     alts_series: [],
   };
+  const gateState = gate.gate_state ?? (gate.open ? "open" : "closed");
+  const historyDays = gate.history_days ?? gate.dominance_series.length;
+  // старый снапшот знает только булев sell_signal — разворачиваем его в трёхуровневый
+  const exit: ExitSignal = data.exit_signal ?? {
+    tier: data.sell_signal ? "sell" : "ok",
+    trends_percentile: pct,
+    coinbase_rank_overall_latest: null,
+    thresholds: {},
+    reasons: [],
+  };
+  const play: Playbook = data.playbook ?? {
+    state: data.sell_signal ? "EXIT" : gate.open ? "ROTATE" : "HOLD_BTC",
+    text: "Снапшот снят до появления этого блока — обновите экспорт.",
+  };
+  const exitColor = exit.tier === "sell" ? t.critical : exit.tier === "warming" ? t.warning : t.ink;
 
   return (
     <>
-      <h2>Обзор рынка — сигнал выхода</h2>
-      {data.sell_signal ? (
+      <h2>Что делать сейчас</h2>
+      <div
+        className={
+          play.state === "EXIT" ? "alert danger" : play.state === "ROTATE" ? "alert ok" : "alert"
+        }
+      >
+        <b>{play.text}</b>
+      </div>
+
+      <h2>Сигнал выхода в стейблы</h2>
+      {exit.tier === "sell" ? (
         <div className="alert danger">
-          <b>Пик интереса!</b> Текущий Google-интерес к биткоину — {pct} перцентиль за 5 лет (&ge; 90).
-          По вашей стратегии: <b>пик = сливаем</b>.
+          <b>Пик интереса — сливаем.</b> Сработало: {exit.reasons.join("; ")}. Это выход из ВСЕГО
+          портфеля в стейблы, а не ротация между монетами.
+        </div>
+      ) : exit.tier === "warming" ? (
+        <div className="alert warn">
+          <b>Разогрев.</b> {exit.reasons.join("; ")}. Продавать рано — подготовьте план выхода:
+          уровни и доли траншей.
         </div>
       ) : (
         <div className="alert ok">
-          Пика интереса нет: текущий Google-интерес к биткоину — {pct ?? "н/д"} перцентиль за 5 лет
-          (сигнал слива при &ge; 90).
+          Эйфории нет: Google-интерес к биткоину {pct ?? "н/д"} перцентиль за 5 лет (слив при &ge;{" "}
+          {exit.thresholds.trends_sell_pct ?? 90}), Coinbase{" "}
+          {exit.coinbase_rank_overall_latest !== null
+            ? exit.coinbase_rank_overall_latest > 200
+              ? "вне топ-200"
+              : `#${exit.coinbase_rank_overall_latest}`
+            : "н/д"}{" "}
+          (слив при &le; #{exit.thresholds.coinbase_sell_rank ?? 10}).
         </div>
       )}
 
-      {gate.open ? (
+      <h2>Ворота входа в лесенку</h2>
+      {gateState === "open" ? (
         <div className="alert ok">
           <b>Ворота входа открыты.</b> Альты обгоняют BTC ({gate.alts_beating_btc_30d_pct}% топ-100 за
           30 дней, порог {gate.alts_threshold}%) при падающей доминации BTC — фаза ротации в альты,
           лесенка применима.
+        </div>
+      ) : gateState === "warming" ? (
+        <div className="alert warn">
+          <b>Разогрев: альты обгоняют BTC, доминация не подтверждена.</b>{" "}
+          {gate.alts_beating_btc_30d_pct}% топ-100 за 30 дней при пороге {gate.alts_threshold}%, но
+          истории доминации {historyDays} из {gate.dominance_lookback_days} дн. Одна доля альтов даёт
+          ложный сигнал на отскоке — ждём подтверждения по доминации.
         </div>
       ) : (
         <div className="alert">
@@ -133,10 +176,12 @@ export default function MarketPage() {
       <div className="stat-row">
         <div className="stat">
           <div className="label">Google Trends «bitcoin», перцентиль</div>
-          <div className="value" style={{ color: pct !== null && pct >= 90 ? t.critical : t.ink }}>
+          <div className="value" style={{ color: exitColor }}>
             {pct ?? "н/д"}
           </div>
-          <div className="hint">от 5-летнего диапазона (ф.1)</div>
+          <div className="hint">
+            от 5-летнего диапазона (ф.1); слив при &ge; {exit.thresholds.trends_sell_pct ?? 90}
+          </div>
         </div>
         <div className="stat">
           <div className="label">BTC, последняя цена</div>
@@ -161,12 +206,17 @@ export default function MarketPage() {
         </div>
         <div className="stat">
           <div className="label">Ворота входа в лесенку</div>
-          <div className="value" style={{ color: gate.open ? t.good : t.ink }}>
-            {gate.open ? "открыты" : "закрыты"}
+          <div
+            className="value"
+            style={{
+              color: gateState === "open" ? t.good : gateState === "warming" ? t.warning : t.ink,
+            }}
+          >
+            {gateState === "open" ? "открыты" : gateState === "warming" ? "разогрев" : "закрыты"}
           </div>
           <div className="hint">
             {gate.alts_beating_btc_30d_pct !== null
-              ? `${gate.alts_beating_btc_30d_pct}% альтов обгоняют BTC`
+              ? `${gate.alts_beating_btc_30d_pct}% альтов обгоняют BTC; истории ${historyDays} из ${gate.dominance_lookback_days} дн.`
               : "нет данных"}
           </div>
         </div>
