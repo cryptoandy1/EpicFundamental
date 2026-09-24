@@ -58,6 +58,8 @@ try {
     # скринер не влияет на успех прогона: CoinGecko капризен, а данные справочные
     if ($ok) { Invoke-Step "скринер кандидатов (ф.3)" @("-m", "app", "screen") | Out-Null }
     if ($ok) { $ok = Invoke-Step "экспорт JSON" @("-m", "app", "export") }
+    # оповещения о СИГНАЛАХ (не о сбоях): нефатально, код возврата не проверяем
+    if ($ok) { Invoke-Step "сигналы (Telegram)" @("-m", "app", "notify") | Out-Null }
 } finally {
     Pop-Location
 }

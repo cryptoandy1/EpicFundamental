@@ -54,6 +54,8 @@ try {
         "--collector", "nansen"
     )
     if ($ok) { $ok = Invoke-Step "экспорт JSON" @("-m", "app", "export") }
+    # оповещения о СИГНАЛАХ (не о сбоях): нефатально, код возврата не проверяем
+    if ($ok) { Invoke-Step "сигналы (Telegram)" @("-m", "app", "notify") | Out-Null }
 } finally {
     Pop-Location
 }

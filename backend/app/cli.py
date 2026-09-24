@@ -4,6 +4,7 @@
   backfill          — выгрузить всю доступную историю (приоритет проекта)
   update            — инкрементально дособрать свежее
   screen            — прогнать скринер кандидатов (ф.3)
+  notify            — сигналы в Telegram при смене состояния (ворота/выход/протухание)
   ladder            — показать композитный скор «лесенки»
   list-collectors   — список коллекторов
   serve             — запустить FastAPI (uvicorn)
@@ -88,6 +89,9 @@ def main() -> None:
             help="только указанные коллекторы (можно несколько раз)",
         )
     sub.add_parser("screen", help="скринер кандидатов (ф.3)")
+    notify = sub.add_parser("notify", help="сигналы в Telegram при смене состояния")
+    notify.add_argument("--digest", action="store_true", help="прислать сводку принудительно")
+    notify.add_argument("--dry-run", action="store_true", help="показать, что отправилось бы")
     sub.add_parser("ladder", help="композитный скор «лесенки»")
     sub.add_parser("list-collectors")
     serve = sub.add_parser("serve", help="запустить API-сервер")
@@ -114,6 +118,16 @@ def main() -> None:
         for c in candidates[:40]:
             print(f"  {c['symbol']:8} {c['name'][:30]:30} {c['reason']}")
         print("Утверждённые монеты переносите вручную в config/projects.yaml")
+    elif args.command == "notify":
+        from .notify import run_notify
+
+        # шаг нефатальный: оповещение не должно ронять прогон сбора
+        try:
+            sent = run_notify(digest=args.digest, dry_run=args.dry_run)
+            print(f"notify: сообщений {len(sent)}")
+        except Exception as e:  # noqa: BLE001
+            log.exception("notify")
+            print(f"notify: ОШИБКА ({e}) — прогон не прерван")
     elif args.command == "ladder":
         from .scoring import compute_ladder
 
