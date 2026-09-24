@@ -2,7 +2,7 @@
 
 Повторяет ответы всех эндпоинтов main.py в файлы:
   data/meta.json, data/market/overview.json, data/projects.json, data/projects/{id}.json,
-  data/screener.json, data/ladder.json
+  data/screener.json, data/ladder.json, data/backtest.json (если посчитан)
 Фронтенд в статическом режиме (NEXT_PUBLIC_STATIC=1) читает эти файлы
 вместо живого API.
 """
@@ -39,6 +39,11 @@ def export_static(out_dir: Path | str = DEFAULT_OUT) -> list[Path]:
     }
     for pid in project_ids:
         payloads[f"projects/{pid}.json"] = project_detail(pid)
+
+    # бэктест считается отдельной командой (минуты) — экспорт только копирует готовое
+    bt = Path(__file__).resolve().parents[1] / "data" / "backtest.json"
+    if bt.exists():
+        payloads["backtest.json"] = json.loads(bt.read_text(encoding="utf-8"))
 
     written = []
     for rel, payload in payloads.items():

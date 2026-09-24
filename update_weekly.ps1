@@ -57,6 +57,8 @@ try {
     $ok = Invoke-Step "полный сбор данных" @("-m", "app", "update")
     # скринер не влияет на успех прогона: CoinGecko капризен, а данные справочные
     if ($ok) { Invoke-Step "скринер кандидатов (ф.3)" @("-m", "app", "screen") | Out-Null }
+    # бэктест лесенки: as-of ранги против последующей доходности; нефатально
+    if ($ok) { Invoke-Step "бэктест лесенки" @("-m", "app", "backtest", "--start", "2024-01-01") | Out-Null }
     if ($ok) { $ok = Invoke-Step "экспорт JSON" @("-m", "app", "export") }
     # оповещения о СИГНАЛАХ (не о сбоях): нефатально, код возврата не проверяем
     if ($ok) { Invoke-Step "сигналы (Telegram)" @("-m", "app", "notify") | Out-Null }

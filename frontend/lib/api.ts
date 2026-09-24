@@ -166,6 +166,40 @@ export interface ScreenerResponse {
   }[];
 }
 
+/** Бэктест: проверка скора на истории (as-of ранги против последующей доходности). */
+export interface BacktestSummary {
+  periods: number;
+  mean_spearman: number | null;
+  median_spearman: number | null;
+  spearman_positive_rate: number | null;
+  /** верх минус низ лесенки — качество ранжирования, не зависит от фазы рынка */
+  mean_long_short: number | null;
+  long_short_positive_rate: number | null;
+  hit_rate: number | null;
+  mean_top_excess: number | null;
+  strategy_cum: number;
+  btc_cum: number;
+  caveats: string[];
+}
+
+export interface BacktestDate {
+  date: string;
+  n: number;
+  mean_coverage: number;
+  btc_return: number;
+  spearman: number | null;
+  top_excess: number;
+  bottom_excess: number;
+  top_symbols: string[];
+}
+
+export interface Backtest {
+  params: Record<string, string | number>;
+  generated_at?: string;
+  dates: BacktestDate[];
+  summary: BacktestSummary | null;
+}
+
 export interface LadderRow {
   project: string;
   name: string;

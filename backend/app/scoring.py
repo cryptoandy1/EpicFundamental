@@ -35,22 +35,28 @@ def _now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-def _series_sum(session: Session, project_id: str, metric: str, since: datetime) -> float | None:
-    rows = (
-        session.query(Metric.value)
-        .filter(Metric.project_id == project_id, Metric.metric == metric, Metric.ts >= since)
-        .all()
+def _series_sum(
+    session: Session, project_id: str, metric: str, since: datetime, as_of: datetime | None = None
+) -> float | None:
+    q = session.query(Metric.value).filter(
+        Metric.project_id == project_id, Metric.metric == metric, Metric.ts >= since
     )
+    if as_of is not None:
+        q = q.filter(Metric.ts <= as_of)
+    rows = q.all()
     return sum(r[0] for r in rows) if rows else None
 
 
-def _latest(session: Session, project_id: str, metric: str) -> float | None:
-    row = (
-        session.query(Metric.value)
-        .filter(Metric.project_id == project_id, Metric.metric == metric)
-        .order_by(Metric.ts.desc())
-        .first()
+def _latest(
+    session: Session, project_id: str, metric: str, as_of: datetime | None = None
+) -> float | None:
+    """Последнее значение метрики; с as_of — последнее НА ТУ ДАТУ (для бэктеста)."""
+    q = session.query(Metric.value).filter(
+        Metric.project_id == project_id, Metric.metric == metric
     )
+    if as_of is not None:
+        q = q.filter(Metric.ts <= as_of)
+    row = q.order_by(Metric.ts.desc()).first()
     return row[0] if row else None
 
 
@@ -61,19 +67,21 @@ def _momentum(
     recent_days: int = 28,
     base_days: int = 84,
     min_base_total: float = 0.0,
+    as_of: datetime | None = None,
 ) -> float | None:
     """Среднее за последние recent_days / среднее за base_days до них.
 
     min_base_total — минимальная СУММА значений в базовом окне: моментум редких
     счётчиков (1–2 события в квартал) — шум, а не сигнал; ниже порога -> None
     (фактор честно исключается из скора)."""
-    now = _now()
+    now = as_of or _now()
     recent = (
         session.query(Metric.value)
         .filter(
             Metric.project_id == project_id,
             Metric.metric == metric,
             Metric.ts >= now - timedelta(days=recent_days),
+            Metric.ts <= now,
         )
         .all()
     )
@@ -96,24 +104,30 @@ def _momentum(
     return recent_avg / base_avg if base_avg else None
 
 
-def _avg_recent(session: Session, project_id: str, metric: str, days: int = 28) -> float | None:
+def _avg_recent(
+    session: Session, project_id: str, metric: str, days: int = 28, as_of: datetime | None = None
+) -> float | None:
     """Среднее значений метрики за последние `days` (снапшоты Nansen — недельные)."""
+    now = as_of or _now()
     rows = (
         session.query(Metric.value)
         .filter(
             Metric.project_id == project_id,
             Metric.metric == metric,
-            Metric.ts >= _now() - timedelta(days=days),
+            Metric.ts >= now - timedelta(days=days),
+            Metric.ts <= now,
         )
         .all()
     )
     return sum(r[0] for r in rows) / len(rows) if rows else None
 
 
-def _per_market_cap(session: Session, project_id: str, metric: str, days: int = 28) -> float | None:
+def _per_market_cap(
+    session: Session, project_id: str, metric: str, days: int = 28, as_of: datetime | None = None
+) -> float | None:
     """Средний поток за окно, нормированный на капитализацию — сравнимо между монетами."""
-    flow = _avg_recent(session, project_id, metric, days)
-    cap = _latest(session, project_id, "market_cap")
+    flow = _avg_recent(session, project_id, metric, days, as_of=as_of)
+    cap = _latest(session, project_id, "market_cap", as_of=as_of)
     return flow / cap if flow is not None and cap else None
 
 
@@ -138,47 +152,56 @@ def _value_at(
     return row[0] if row else None
 
 
-def _rel_strength_btc(session: Session, project_id: str, days: int = 90) -> float | None:
+def _rel_strength_btc(
+    session: Session, project_id: str, days: int = 90, as_of: datetime | None = None
+) -> float | None:
     """Сила монеты относительно BTC за `days`: (рост монеты / рост BTC) − 1.
 
     Ротация в альты имеет смысл только для тех, кто уже обгоняет BTC: ценовой моментум —
     самый устойчивый из известных крипто-факторов, а у нас его не было вовсе. Окно 90 дней
     согласовано с базой 84 дня у остальных моментумов; 30-дневное окно уже стоит в воротах
     входа (доля альтов, обгоняющих BTC), дублировать его здесь не нужно."""
-    now = _now()
+    now = as_of or _now()
     then = now - timedelta(days=days)
-    p_now = _latest(session, project_id, "price_usd")
+    p_now = _latest(session, project_id, "price_usd", as_of=now)
     p_then = _value_at(session, project_id, "price_usd", then)
-    b_now = _latest(session, MARKET, "btc_price_usd")
+    b_now = _latest(session, MARKET, "btc_price_usd", as_of=now)
     b_then = _value_at(session, MARKET, "btc_price_usd", then)
     if not (p_now and p_then and b_now and b_then):
         return None
     return (p_now / p_then) / (b_now / b_then) - 1.0
 
 
-def _fees_to_mcap(session: Session, project_id: str, days: int = 90) -> float | None:
+def _fees_to_mcap(
+    session: Session, project_id: str, days: int = 90, as_of: datetime | None = None
+) -> float | None:
     """Годовые комиссии сети к капитализации — единственный фактор оценки стоимости.
 
     Все прочие факторы измеряют ускорение; этот отвечает на вопрос «сколько платят за
     доллар реального использования». Аналог P/E: выше — дешевле."""
-    fees = _series_sum(session, project_id, "chain_fees_usd", _now() - timedelta(days=days))
-    cap = _latest(session, project_id, "market_cap")
+    now = as_of or _now()
+    fees = _series_sum(session, project_id, "chain_fees_usd", now - timedelta(days=days), as_of=now)
+    cap = _latest(session, project_id, "market_cap", as_of=now)
     if fees is None or not cap:
         return None
     return fees * (365.0 / days) / cap
 
 
-def _sm_perp_skew(session: Session, project_id: str, min_accounts: int = 5) -> float | None:
+def _sm_perp_skew(
+    session: Session, project_id: str, min_accounts: int = 5, as_of: datetime | None = None
+) -> float | None:
     """Перекос позиций Smart Money на перпах; при когорте < min_accounts — шум, None."""
-    longs = _latest(session, project_id, "nansen_perp_sm_longs_count") or 0
-    shorts = _latest(session, project_id, "nansen_perp_sm_shorts_count") or 0
+    longs = _latest(session, project_id, "nansen_perp_sm_longs_count", as_of=as_of) or 0
+    shorts = _latest(session, project_id, "nansen_perp_sm_shorts_count", as_of=as_of) or 0
     if longs + shorts < min_accounts:
         return None
-    return _avg_recent(session, project_id, "nansen_perp_sm_skew")
+    return _avg_recent(session, project_id, "nansen_perp_sm_skew", as_of=as_of)
 
 
-def _factor_values(session: Session, project: Project) -> dict[str, float | None]:
-    now = _now()
+def _factor_values(
+    session: Session, project: Project, as_of: datetime | None = None
+) -> dict[str, float | None]:
+    now = as_of or _now()
     q90 = now - timedelta(days=90)
 
     # навес разлоков: будущие клифы на 90 дней вперёд, суммарные токены / текущая эмиссия
@@ -192,7 +215,7 @@ def _factor_values(session: Session, project: Project) -> dict[str, float | None
         )
         .all()
     )
-    unlocked_now = _latest(session, project.id, "unlocked_total")
+    unlocked_now = _latest(session, project.id, "unlocked_total", as_of=now)
     unlock_pressure = (
         sum(e.value for e in future_unlocks) / unlocked_now
         if future_unlocks and unlocked_now
@@ -200,13 +223,13 @@ def _factor_values(session: Session, project: Project) -> dict[str, float | None
     )
 
     # продажи команды: доля выведенного на биржи за 90д (в токенах)
-    team_out = _series_sum(session, project.id, "team_to_exchange_tokens", q90)
+    team_out = _series_sum(session, project.id, "team_to_exchange_tokens", q90, as_of=now)
     has_wallets = (
         session.query(Wallet).filter_by(project_id=project.id).first() is not None
     )
     team_selling = team_out if has_wallets and team_out is not None else None
 
-    node_now = _latest(session, project.id, "node_count")
+    node_now = _latest(session, project.id, "node_count", as_of=now)
     node_old = (
         session.query(Metric.value)
         .filter(
@@ -221,30 +244,35 @@ def _factor_values(session: Session, project: Project) -> dict[str, float | None
 
     return {
         # GitHub (ф.5) — два фактора: ядро (разработка ОТ команды) и экосистема (разработка НА платформе)
-        "github_core_devs": _momentum(session, project.id, "github_active_devs_week"),
+        "github_core_devs": _momentum(session, project.id, "github_active_devs_week", as_of=now),
         # экосистема: окна длиннее (12 нед / 24 нед) и порог базы — новые репо у малых
         # экосистем редки, недельный моментум 28/84 был бы случайным числом
         "github_ecosystem": _momentum(
-            session, project.id, "github_eco_new_repos_week", 84, 168, min_base_total=ECO_MIN_BASE_REPOS
+            session, project.id, "github_eco_new_repos_week", 84, 168,
+            min_base_total=ECO_MIN_BASE_REPOS, as_of=now,
         ),
-        "trends_momentum": _momentum(session, project.id, "trends_weekly"),
-        "mentions_momentum": _momentum(session, project.id, "media_mentions"),
+        "trends_momentum": _momentum(session, project.id, "trends_weekly", as_of=now),
+        "mentions_momentum": _momentum(session, project.id, "media_mentions", as_of=now),
         "node_growth": node_growth,
         "unlock_pressure": unlock_pressure,
         "team_selling": team_selling,
         # Nansen (ф.11): потоки за 7д на капитализацию (среднее снапшотов за 28д) и
         # перекос позиций Smart Money на перпах Hyperliquid
-        "fresh_wallets_flow": _per_market_cap(session, project.id, "nansen_fi7d_fresh_wallets_netflow_usd"),
-        "exchange_flow": _per_market_cap(session, project.id, "nansen_fi7d_exchange_netflow_usd"),
-        "sm_perp_skew": _sm_perp_skew(session, project.id),
-        "discord_activity": _momentum(session, project.id, "discord_substantive_week", 28, 56),
+        "fresh_wallets_flow": _per_market_cap(
+            session, project.id, "nansen_fi7d_fresh_wallets_netflow_usd", as_of=now
+        ),
+        "exchange_flow": _per_market_cap(
+            session, project.id, "nansen_fi7d_exchange_netflow_usd", as_of=now
+        ),
+        "sm_perp_skew": _sm_perp_skew(session, project.id, as_of=now),
+        "discord_activity": _momentum(session, project.id, "discord_substantive_week", 28, 56, as_of=now),
         # DefiLlama (бесплатные эндпоинты): деньги и использование сети
-        "tvl_momentum": _momentum(session, project.id, "chain_tvl_usd"),
-        "fees_momentum": _momentum(session, project.id, "chain_fees_usd"),
+        "tvl_momentum": _momentum(session, project.id, "chain_tvl_usd", as_of=now),
+        "fees_momentum": _momentum(session, project.id, "chain_fees_usd", as_of=now),
         # Цена: единственный фактор, который смотрит на саму котировку, а не на активность
-        "rel_strength_btc": _rel_strength_btc(session, project.id),
+        "rel_strength_btc": _rel_strength_btc(session, project.id, as_of=now),
         # Оценка стоимости: годовые комиссии к капитализации (аналог P/E, выше = дешевле)
-        "fees_to_mcap": _fees_to_mcap(session, project.id),
+        "fees_to_mcap": _fees_to_mcap(session, project.id, as_of=now),
     }
 
 
@@ -255,13 +283,15 @@ def _percentile(values: list[float], v: float) -> float:
     return below / (len(values) - 1) * 100 if len(values) > 1 else 50.0
 
 
-def compute_ladder(session: Session) -> list[dict]:
+def compute_ladder(session: Session, as_of: datetime | None = None) -> list[dict]:
     """[{project, score, coverage, factors: {name: {value, percentile, weight}}}] по убыванию скора.
 
-    coverage — доля суммы |весов|, стоящая на реальных данных (остальное — нейтральные 50)."""
+    coverage — доля суммы |весов|, стоящая на реальных данных (остальное — нейтральные 50).
+    as_of — считать скор ПО СОСТОЯНИЮ НА ДАТУ, игнорируя всё, что появилось позже
+    (нужно бэктесту: иначе ранги знали бы будущее)."""
     weights = (load_config().get("scoring") or {})
     projects = session.query(Project).filter_by(approved=True).all()
-    raw = {p.id: _factor_values(session, p) for p in projects}
+    raw = {p.id: _factor_values(session, p, as_of=as_of) for p in projects}
 
     results = []
     for p in projects:

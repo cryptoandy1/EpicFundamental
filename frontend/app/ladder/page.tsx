@@ -1,7 +1,10 @@
 "use client";
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { api, LadderRow } from "@/lib/api";
+import { api, Backtest, LadderRow } from "@/lib/api";
+
+const pct = (v: number | null | undefined, digits = 1) =>
+  v === null || v === undefined ? "н/д" : `${(v * 100).toFixed(digits)}%`;
 
 const FACTOR_LABELS: Record<string, string> = {
   github_core_devs: "GitHub ядро: активные разработчики, momentum (ф.5)",
@@ -23,10 +26,12 @@ const FACTOR_LABELS: Record<string, string> = {
 
 export default function LadderPage() {
   const [rows, setRows] = useState<LadderRow[] | null>(null);
+  const [backtest, setBacktest] = useState<Backtest | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     api<LadderRow[]>("/api/ladder").then(setRows).catch((e) => setError(String(e)));
+    api<Backtest>("/api/backtest").then(setBacktest).catch(() => null);
   }, []);
 
   if (error) return <div className="alert danger">API недоступен: {error}</div>;
@@ -108,6 +113,109 @@ export default function LadderPage() {
         нет, фактор считается нейтральным (не помогает и не вредит), чтобы монеты с разным покрытием
         сравнивались честно. «Покрытие» — доля веса скора на реальных данных.
       </p>
+
+      {backtest?.summary && (
+        <>
+          <h2>Бэктест: работает ли скор</h2>
+          <p style={{ color: "var(--muted)" }}>
+            Скор считается по состоянию на дату (as-of, без знания будущего) и сверяется с тем, что
+            монеты показали за следующие {backtest.params.horizon_days} дн. Периодов:{" "}
+            {backtest.summary.periods}, с {backtest.params.start}.
+          </p>
+
+          <div className="stat-row">
+            <div className="stat">
+              <div className="label">Верх минус низ лесенки</div>
+              <div
+                className="value"
+                style={{
+                  color:
+                    (backtest.summary.mean_long_short ?? 0) > 0 ? "var(--good)" : "var(--critical)",
+                }}
+              >
+                {pct(backtest.summary.mean_long_short)}
+              </div>
+              <div className="hint">
+                за период; плюс в {pct(backtest.summary.long_short_positive_rate, 0)} периодов —
+                качество ранжирования, не зависит от фазы рынка
+              </div>
+            </div>
+            <div className="stat">
+              <div className="label">Spearman (ранг vs доходность)</div>
+              <div className="value">{backtest.summary.mean_spearman ?? "н/д"}</div>
+              <div className="hint">
+                медиана {backtest.summary.median_spearman ?? "н/д"}; плюс в{" "}
+                {pct(backtest.summary.spearman_positive_rate, 0)} периодов (0 = скор бесполезен)
+              </div>
+            </div>
+            <div className="stat">
+              <div className="label">Топ-3 против HODL BTC</div>
+              <div
+                className="value"
+                style={{
+                  color:
+                    backtest.summary.strategy_cum > backtest.summary.btc_cum
+                      ? "var(--good)"
+                      : "var(--critical)",
+                }}
+              >
+                {pct(backtest.summary.strategy_cum, 0)}
+              </div>
+              <div className="hint">
+                против {pct(backtest.summary.btc_cum, 0)} у биткоина; топ обгонял BTC в{" "}
+                {pct(backtest.summary.hit_rate, 0)} периодов
+              </div>
+            </div>
+          </div>
+
+          <div className="alert warn">
+            <b>Как это читать.</b> Скор ранжирует альты в нужную сторону (верх обгоняет низ), но
+            ротация в альты всё равно проигрывала простому удержанию биткоина: 2024–2026 были
+            «сезоном биткоина». Лесенка отвечает на вопрос «в какую монету», а не «пора ли вообще
+            выходить из BTC» — на второй отвечают ворота входа на главной.
+          </div>
+
+          <div className="card" style={{ overflowX: "auto" }}>
+            <table className="data">
+              <thead>
+                <tr>
+                  <th>Дата среза</th>
+                  <th className="num">Монет</th>
+                  <th className="num">Покрытие</th>
+                  <th className="num">Spearman</th>
+                  <th className="num">Топ vs BTC</th>
+                  <th className="num">Низ vs BTC</th>
+                  <th className="num">BTC за период</th>
+                  <th>Топ-3 на дату</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[...backtest.dates].reverse().map((d) => (
+                  <tr key={d.date}>
+                    <td>{d.date}</td>
+                    <td className="num">{d.n}</td>
+                    <td className="num">{pct(d.mean_coverage, 0)}</td>
+                    <td className="num">{d.spearman ?? "—"}</td>
+                    <td
+                      className="num"
+                      style={{ color: d.top_excess > 0 ? "var(--good)" : "var(--critical)" }}
+                    >
+                      {pct(d.top_excess)}
+                    </td>
+                    <td className="num">{pct(d.bottom_excess)}</td>
+                    <td className="num">{pct(d.btc_return)}</td>
+                    <td>{d.top_symbols.join(", ")}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <p style={{ color: "var(--muted)", fontSize: 12 }}>
+            Ограничения: {backtest.summary.caveats.join(" ")}
+          </p>
+        </>
+      )}
     </>
   );
 }

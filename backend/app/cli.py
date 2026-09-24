@@ -5,6 +5,7 @@
   update            — инкрементально дособрать свежее
   screen            — прогнать скринер кандидатов (ф.3)
   notify            — сигналы в Telegram при смене состояния (ворота/выход/протухание)
+  backtest          — проверка скора лесенки на истории (as-of ранги vs доходность)
   ladder            — показать композитный скор «лесенки»
   list-collectors   — список коллекторов
   serve             — запустить FastAPI (uvicorn)
@@ -89,6 +90,12 @@ def main() -> None:
             help="только указанные коллекторы (можно несколько раз)",
         )
     sub.add_parser("screen", help="скринер кандидатов (ф.3)")
+    bt = sub.add_parser("backtest", help="проверить скор лесенки на истории (as-of)")
+    bt.add_argument("--start", default="2024-01-01", help="дата начала (YYYY-MM-DD)")
+    bt.add_argument("--end", help="дата конца (по умолчанию сегодня)")
+    bt.add_argument("--step-days", type=int, default=28, help="шаг между срезами")
+    bt.add_argument("--horizon-days", type=int, default=28, help="горизонт доходности")
+    bt.add_argument("--out", help="куда положить JSON (по умолчанию backend/data/backtest.json)")
     notify = sub.add_parser("notify", help="сигналы в Telegram при смене состояния")
     notify.add_argument("--digest", action="store_true", help="прислать сводку принудительно")
     notify.add_argument("--dry-run", action="store_true", help="показать, что отправилось бы")
@@ -118,6 +125,33 @@ def main() -> None:
         for c in candidates[:40]:
             print(f"  {c['symbol']:8} {c['name'][:30]:30} {c['reason']}")
         print("Утверждённые монеты переносите вручную в config/projects.yaml")
+    elif args.command == "backtest":
+        import json
+        from datetime import datetime as _dt
+        from pathlib import Path
+
+        from .backtest import run_backtest
+
+        init_db()
+        session = SessionLocal()
+        sync_projects(session)
+        start = _dt.fromisoformat(args.start)
+        end = _dt.fromisoformat(args.end) if args.end else _dt.utcnow()
+        result = run_backtest(session, start, end, args.step_days, args.horizon_days)
+        out = Path(args.out) if args.out else Path(__file__).resolve().parents[1] / "data" / "backtest.json"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
+        s = result["summary"]
+        print(f"Периодов: {s['periods']}, горизонт {args.horizon_days} дн.")
+        print("--- качество ранжирования (нейтрально к фазе рынка) ---")
+        print(f"  Лонг-шорт, верх минус низ: {s['mean_long_short']:+.2%} за период, "
+              f"плюс в {s['long_short_positive_rate']:.0%} периодов")
+        print(f"  Spearman: среднее {s['mean_spearman']}, медиана {s['median_spearman']}, "
+              f"плюс в {s['spearman_positive_rate']:.0%} периодов")
+        print("--- доходность против биткоина ---")
+        print(f"  Топ обгонял BTC в {s['hit_rate']:.0%} периодов, средний отрыв {s['mean_top_excess']:+.2%}")
+        print(f"  Стратегия «топ-3»: {s['strategy_cum']:+.1%} против HODL BTC {s['btc_cum']:+.1%}")
+        print(f"-> {out}")
     elif args.command == "notify":
         from .notify import run_notify
 

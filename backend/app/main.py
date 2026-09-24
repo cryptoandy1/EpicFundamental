@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 from collections import defaultdict
+from pathlib import Path
 from datetime import datetime, timedelta, timezone
 
 from fastapi import FastAPI, HTTPException
@@ -538,6 +539,15 @@ def screener_candidates():
         }
     finally:
         session.close()
+
+
+@app.get("/api/backtest")
+def backtest_result():
+    """Результат последнего `python -m app backtest` (считается в недельном прогоне)."""
+    path = Path(__file__).resolve().parents[1] / "data" / "backtest.json"
+    if not path.exists():
+        return {"params": {}, "dates": [], "summary": None}
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 @app.get("/api/ladder")
