@@ -17,6 +17,8 @@ const FACTOR_LABELS: Record<string, string> = {
   discord_activity: "Discord (ф.12)",
   tvl_momentum: "TVL momentum",
   fees_momentum: "Комиссии momentum",
+  rel_strength_btc: "Сила vs BTC, 90д",
+  fees_to_mcap: "Комиссии/капа, годовые",
 };
 
 export default function LadderPage() {

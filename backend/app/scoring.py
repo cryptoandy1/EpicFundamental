@@ -24,7 +24,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy.orm import Session
 
 from .config import load_config
-from .models import Event, Metric, Project, Wallet, WalletFlow
+from .models import MARKET, Event, Metric, Project, Wallet, WalletFlow
 
 
 NEUTRAL_PERCENTILE = 50.0  # перцентиль фактора без данных: «не знаем» = ни плюс, ни минус
@@ -117,6 +117,57 @@ def _per_market_cap(session: Session, project_id: str, metric: str, days: int = 
     return flow / cap if flow is not None and cap else None
 
 
+def _value_at(
+    session: Session, project_id: str, metric: str, at: datetime, max_gap_days: int = 10
+) -> float | None:
+    """Значение метрики на дату: ближайшая точка не позже `at` и не старше max_gap_days.
+
+    Ограничение по разрыву обязательно: без него монета с обрывом ряда сравнивалась бы
+    с ценой полугодовой давности и давала бы фантастическую «силу»."""
+    row = (
+        session.query(Metric.value)
+        .filter(
+            Metric.project_id == project_id,
+            Metric.metric == metric,
+            Metric.ts <= at,
+            Metric.ts >= at - timedelta(days=max_gap_days),
+        )
+        .order_by(Metric.ts.desc())
+        .first()
+    )
+    return row[0] if row else None
+
+
+def _rel_strength_btc(session: Session, project_id: str, days: int = 90) -> float | None:
+    """Сила монеты относительно BTC за `days`: (рост монеты / рост BTC) − 1.
+
+    Ротация в альты имеет смысл только для тех, кто уже обгоняет BTC: ценовой моментум —
+    самый устойчивый из известных крипто-факторов, а у нас его не было вовсе. Окно 90 дней
+    согласовано с базой 84 дня у остальных моментумов; 30-дневное окно уже стоит в воротах
+    входа (доля альтов, обгоняющих BTC), дублировать его здесь не нужно."""
+    now = _now()
+    then = now - timedelta(days=days)
+    p_now = _latest(session, project_id, "price_usd")
+    p_then = _value_at(session, project_id, "price_usd", then)
+    b_now = _latest(session, MARKET, "btc_price_usd")
+    b_then = _value_at(session, MARKET, "btc_price_usd", then)
+    if not (p_now and p_then and b_now and b_then):
+        return None
+    return (p_now / p_then) / (b_now / b_then) - 1.0
+
+
+def _fees_to_mcap(session: Session, project_id: str, days: int = 90) -> float | None:
+    """Годовые комиссии сети к капитализации — единственный фактор оценки стоимости.
+
+    Все прочие факторы измеряют ускорение; этот отвечает на вопрос «сколько платят за
+    доллар реального использования». Аналог P/E: выше — дешевле."""
+    fees = _series_sum(session, project_id, "chain_fees_usd", _now() - timedelta(days=days))
+    cap = _latest(session, project_id, "market_cap")
+    if fees is None or not cap:
+        return None
+    return fees * (365.0 / days) / cap
+
+
 def _sm_perp_skew(session: Session, project_id: str, min_accounts: int = 5) -> float | None:
     """Перекос позиций Smart Money на перпах; при когорте < min_accounts — шум, None."""
     longs = _latest(session, project_id, "nansen_perp_sm_longs_count") or 0
@@ -190,6 +241,10 @@ def _factor_values(session: Session, project: Project) -> dict[str, float | None
         # DefiLlama (бесплатные эндпоинты): деньги и использование сети
         "tvl_momentum": _momentum(session, project.id, "chain_tvl_usd"),
         "fees_momentum": _momentum(session, project.id, "chain_fees_usd"),
+        # Цена: единственный фактор, который смотрит на саму котировку, а не на активность
+        "rel_strength_btc": _rel_strength_btc(session, project.id),
+        # Оценка стоимости: годовые комиссии к капитализации (аналог P/E, выше = дешевле)
+        "fees_to_mcap": _fees_to_mcap(session, project.id),
     }
 
 
